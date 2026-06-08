@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>K21 · DUNSTABLE · 6-DOF</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Share+Tech+Mono&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;width:100%;overflow:hidden;background:#04070d;color:#cfe3ff;
+    font-family:'Chakra Petch',sans-serif;touch-action:none;overscroll-behavior:none;position:fixed;}
+  canvas{display:block;width:100%;height:100%;touch-action:none;}
+  #app{position:fixed;inset:0;}
+
+  .pad{position:fixed;bottom:16px;border-radius:18px;background:rgba(14,24,44,0.72);
+    border:2px solid #1c3354;touch-action:none;z-index:5;}
+  #stickPad{left:14px;width:140px;height:140px;}
+  #rudderPad{right:14px;width:190px;height:78px;border-radius:40px;bottom:46px;}
+  .pad .lbl{position:absolute;top:6px;left:0;right:0;text-align:center;font-size:9px;letter-spacing:2px;color:#6f8fc0;}
+  #stickKnob,#rudderKnob{position:absolute;width:44px;height:44px;border-radius:50%;pointer-events:none;}
+  #stickKnob{background:radial-gradient(circle at 40% 35%,#39d0ff,#0b6f9c);box-shadow:0 0 16px rgba(57,208,255,0.7);}
+  #rudderKnob{background:radial-gradient(circle at 40% 35%,#ff7adf,#9c2b78);box-shadow:0 0 16px rgba(255,122,223,0.7);}
+
+  #brakeWrap{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:5;text-align:center;}
+  #brakeWrap .lbl{font-size:9px;letter-spacing:2px;color:#6f8fc0;margin-bottom:4px;}
+  #brake{writing-mode:vertical-lr;direction:rtl;width:26px;height:110px;accent-color:#ff9b6a;}
+
+  #warn{position:fixed;top:8px;left:0;right:0;text-align:center;z-index:6;pointer-events:none;}
+  #stallW{font-weight:700;letter-spacing:3px;font-size:14px;color:#ff3b3b;text-shadow:0 0 12px #ff3b3b;opacity:0;}
+  #spinW{display:block;font-weight:700;letter-spacing:3px;font-size:12px;color:#ffb13b;text-shadow:0 0 12px #ffb13b;opacity:0;margin-top:2px;}
+  #stallW.on,#spinW.on{opacity:1;}
+
+  #menu{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:18px;background:radial-gradient(circle at 50% 30%,rgba(12,26,50,0.97),rgba(4,7,13,0.99));text-align:center;padding:24px;overflow-y:auto;}
+  #menu.hidden{display:none;}
+  h1{font-weight:700;letter-spacing:5px;font-size:clamp(24px,6.5vw,46px);color:#eaf4ff;text-shadow:0 0 16px #2ea8ff,0 0 40px #1c6fd0;}
+  .tag{color:#7f9fce;letter-spacing:3px;font-size:clamp(10px,2.8vw,13px);}
+  .panel{max-width:580px;background:rgba(10,18,36,0.6);border:1px solid #1c3354;border-radius:14px;padding:16px 18px;
+    text-align:left;font-size:clamp(11px,2.8vw,13px);line-height:1.65;color:#aebfdd;}
+  .panel b{color:#cfe3ff;}
+  button{font-family:'Chakra Petch',sans-serif;font-weight:700;letter-spacing:2px;font-size:clamp(13px,3.4vw,16px);
+    color:#04101e;background:linear-gradient(135deg,#39d0ff,#7af0c0);border:none;border-radius:999px;padding:14px 30px;cursor:pointer;
+    box-shadow:0 0 22px rgba(57,208,255,0.5);}
+  button:active{transform:scale(0.96);}
+  .scn{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;}
+  .scn button{background:linear-gradient(135deg,#16263f,#1d3556);color:#cfe3ff;box-shadow:none;border:2px solid #2a4870;padding:10px 16px;font-size:12px;}
+  #resetBtn{position:fixed;top:8px;right:12px;z-index:7;padding:7px 13px;font-size:11px;background:rgba(14,24,44,0.8);color:#9fb6da;border:2px solid #1c3354;box-shadow:none;}
+  #lab{position:fixed;top:8px;left:12px;z-index:7;font-size:11px;letter-spacing:1px;color:#7f9fce;}
+</style>
+</head>
+<body>
+<div id="app"><canvas id="c"></canvas></div>
+<div id="lab"></div>
+<button id="resetBtn">RESET</button>
+<div id="warn"><span id="stallW">STALL</span><span id="spinW">SPIN — OPP RUDDER, STICK FWD</span></div>
+
+<div class="pad" id="stickPad"><span class="lbl">STICK · PITCH/ROLL</span><div id="stickKnob"></div></div>
+<div class="pad" id="rudderPad"><span class="lbl">RUDDER</span><div id="rudderKnob"></div></div>
+<div id="brakeWrap"><div class="lbl">AIRBRAKE</div><input type="range" id="brake" min="0" max="100" value="0"></div>
+
+<div id="menu">
+  <h1>K21 · DUNSTABLE</h1>
+  <div class="tag">FULL 6-DOF · ASK-21 · RIDGE &amp; THERMAL</div>
+  <div class="panel">
+    <b>Physics:</b> genuine six-degree-of-freedom rigid body. Forces &amp; moments from a lift curve and drag polar fitted to published ASK-21 data (35 kn stall, 34:1 at 49 kn, 0.64 m/s min sink). Spins emerge from asymmetric wing stall, not scripting.<br><br>
+    <b>Map:</b> Dunstable Downs — the Chiltern escarpment runs NE–SW and faces NW. With a NW wind you get ridge lift along the slope; thermals drift downwind. London GC sits at the foot.<br><br>
+    <b>Controls:</b> left pad = stick (pull down = nose up, left/right = roll). Right pad = rudder. Side slider = airbrakes. Keep the slip ball centred.<br><br>
+    <b>Honest seams:</b> mass/area/polar/stall are from real data; the stability derivatives &amp; inertias are textbook estimates tuned to the POH's docile handling. No g-feel or buffet. Mental rehearsal only — your London GC instructors are the authority.
+  </div>
+  <div class="tag">SCENARIO</div>
+  <div class="scn">
+    <button data-scn="ridge">RIDGE SOAR</button>
+    <button data-scn="thermal">THERMAL</button>
+    <button data-scn="stall">STALL DRILL</button>
+    <button data-scn="spin">SPIN ENTRY</button>
+  </div>
+  <button id="startBtn">START FLYING</button>
+</div>
+
+<script>
+/* =========================================================================
+   K21 6-DOF GLIDER SIM  ·  world frame: NED (North, East, Down)
+   body frame: x fwd, y right, z down. Orientation as quaternion (body->world).
+   Angular rates p,q,r in body axes. World velocity integrated directly.
+   ========================================================================= */
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(window.devicePixelRatio||1,2);W=innerWidth;H=innerHeight;
+  canvas.width=Math.floor(W*DPR);canvas.height=Math.floor(H*DPR);ctx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener('resize',resize);
+
+/* ---------------- ASK-21 parameters ----------------
+   [M] = measured/published   [E] = estimated/textbook-tuned            */
+const AC={
+  m: 500,            // [E] dual training load (empty 360 + 2 crew), within 600 MTOW [M]
+  S: 17.95,          // [M] wing area m^2
+  b: 17.0,           // [M] span m
+  AR: 16.1,          // [M] aspect ratio (b^2/S)
+  c: 1.056,          // [M] mean chord = S/b
+  Ixx: 3000,         // [E] roll inertia kg m^2
+  Iyy: 1200,         // [E] pitch inertia
+  Izz: 3800,         // [E] yaw inertia
+  // aero
+  CL0: 0.25,         // [E] lift at zero AoA (cambered)
+  CLa: 5.0,          // [E] dCL/dalpha per rad (AR16 lifting-line ~5.0)
+  aCrit: 0.26,       // [E] critical AoA ~15deg in rad (gives CLmax ~1.4 -> 35kn stall [M])
+  CLmax: 1.40,       // [M-derived] from stall speed at weight
+  CD0: 0.010,        // [M-fit] zero-lift drag -> 34:1 best L/D [M]
+  e: 0.90,           // [E] Oswald efficiency
+  CYb: -0.30,        // [E] side force due sideslip
+  // moments (per rad unless noted)
+  Cm0: 0.06,         // [E] trims near cruise
+  Cma: -0.7,         // [E] pitch stiffness (stable)
+  Cmq: -9.0,         // [E] pitch damping
+  Cmde: 1.3,         // [E] elevator power (de_cmd>0 = nose up)
+  Clb: -0.08,        // [E] dihedral effect
+  Clp: -0.45,        // [E] roll damping
+  Clr: 0.06,         // [E] roll due yaw
+  Clda: 0.18,        // [E] aileron power
+  Cnb: 0.07,         // [E] weathercock stability (stable, +)
+  Cnp: -0.02,        // [E] yaw due roll
+  Cnr: -0.05,        // [E] yaw damping
+  Cndr: -0.08,       // [E] rudder power (dr>0 = yaw right -> Cn negative? sign tuned below)
+  Cnda: -0.01        // [E] adverse yaw from aileron
+};
+const RHO=1.225, G=9.81, KT=0.514444; // m/s per knot
+
+/* ---------------- state ---------------- */
+let S={}; // dynamic state
+function quatFromEuler(roll,pitch,yaw){ // ZYX
+  const cr=Math.cos(roll/2),sr=Math.sin(roll/2),cp=Math.cos(pitch/2),sp=Math.sin(pitch/2),cy=Math.cos(yaw/2),sy=Math.sin(yaw/2);
+  return [cr*cp*cy+sr*sp*sy, sr*cp*cy-cr*sp*sy, cr*sp*cy+sr*cp*sy, cr*cp*sy-sr*sp*cy];
+}
+function quatNorm(q){const n=Math.hypot(q[0],q[1],q[2],q[3])||1;return [q[0]/n,q[1]/n,q[2]/n,q[3]/n];}
+function quatToEuler(q){const[w,x,y,z]=q;
+  const roll=Math.atan2(2*(w*x+y*z),1-2*(x*x+y*y));
+  let sp=2*(w*y-z*x); sp=Math.max(-1,Math.min(1,sp)); const pitch=Math.asin(sp);
+  const yaw=Math.atan2(2*(w*z+x*y),1-2*(y*y+z*z)); return [roll,pitch,yaw];}
+// rotate world vector -> body  (R^T)
+function w2b(q,v){const[w,x,y,z]=q;
+  // body = R^T * world ; build R (body->world) then transpose-apply
+  const R=rotMat(q);
+  return [R[0]*v[0]+R[3]*v[1]+R[6]*v[2], R[1]*v[0]+R[4]*v[1]+R[7]*v[2], R[2]*v[0]+R[5]*v[1]+R[8]*v[2]];}
+// rotate body vector -> world
+function b2w(q,v){const R=rotMat(q);
+  return [R[0]*v[0]+R[1]*v[1]+R[2]*v[2], R[3]*v[0]+R[4]*v[1]+R[5]*v[2], R[6]*v[0]+R[7]*v[1]+R[8]*v[2]];}
+function rotMat(q){const[w,x,y,z]=q; // body->world, column-major rows below
+  return [1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y),
+          2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x),
+          2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)];}
+
+/* ---------------- environment: Dunstable Downs ---------------- */
+// Ridge line runs NE-SW; escarpment faces NW. Model ridge as a line; lift on windward side.
+const ENV={
+  windDir: 315*Math.PI/180,  // FROM NW (deg->rad), good ridge day
+  windSpd: 7.0,              // m/s (~14 kt)
+  ridgeHeading: 45*Math.PI/180, // ridge runs NE (045/225)
+  ridgeTop: 200,             // m AMSL approx escarpment height above field
+  thermals: []
+};
+function spawnThermals(n){ENV.thermals=[];for(let i=0;i<n;i++){
+  ENV.thermals.push({x:(Math.random()*2-1)*5000, y:(Math.random()*2-1)*5000, r:280+Math.random()*220, w:2.5+Math.random()*3.5});}}
+// ridge lift: component of wind hitting the slope, strongest low & near the ridge line
+function ridgeLift(posN,posE,altUp){
+  // distance from ridge line (line through origin along ridgeHeading)
+  const dirN=Math.cos(ENV.ridgeHeading), dirE=Math.sin(ENV.ridgeHeading);
+  // perpendicular distance (signed): NW side positive
+  const perp = -(posN*(-dirE) + posE*(dirN)); // normal points NW
+  // wind component perpendicular to ridge
+  const wN=Math.cos(ENV.windDir)*ENV.windSpd, wE=Math.sin(ENV.windDir)*ENV.windSpd;
+  const windPerp = -(wN*(-dirE)+wE*dirN); // toward ridge if positive
+  if(windPerp<=0) return 0;
+  // lift band: within ~600m windward of ridge, below ~ridgeTop+300
+  const band=Math.exp(-Math.pow(perp/350,2)) * (perp>-50?1:0);
+  const heightFactor=Math.max(0, 1-(altUp-50)/(ENV.ridgeTop+350));
+  return Math.max(0, windPerp*0.6*band*heightFactor);
+}
+function thermalLift(posN,posE){let s=0;for(const t of ENV.thermals){
+  const d=Math.hypot(posN-t.x,posE-t.y); if(d<t.r) s+=Math.cos(d/t.r*Math.PI/2)*t.w;} return s;}
+function terrainAlt(posN,posE){ // simple escarpment: ground rises on SE side of ridge line
+  const dirN=Math.cos(ENV.ridgeHeading), dirE=Math.sin(ENV.ridgeHeading);
+  const perp = -(posN*(-dirE)+posE*dirN); // NW positive, SE negative
+  // SE plateau high, NW vale low, smooth step at ridge
+  return ENV.ridgeTop*(0.5-0.5*Math.tanh(perp/120));
+}
+
+/* ---------------- scenarios ---------------- */
+let scenario='ridge';
+function setup(s){
+  scenario=s;
+  const e=quatFromEuler(0,0, 45*Math.PI/180); // heading NE along ridge
+  S={ posN:0, posE:-300, posD:-600,  // start 600m up, NW of ridge
+      vN:0,vE:0,vD:0, q:e, p:0,q_:0,r:0,
+      V:26, alpha:0, beta:0, gLoad:1, vario:0, alive:true, brake:0,
+      spinning:false };
+  // initialise world velocity along heading at trim speed
+  const spd=26; const fwd=b2w(e,[1,0,0]);
+  S.vN=fwd[0]*spd; S.vE=fwd[1]*spd; S.vD=fwd[2]*spd;
+  ENV.windDir=315*Math.PI/180; ENV.windSpd=7;
+  if(s==='ridge'){ ENV.windSpd=8; S.posE=-200; S.posD=-220; spawnThermals(2);}
+  if(s==='thermal'){ ENV.windSpd=3; S.posD=-450; spawnThermals(7);}
+  if(s==='stall'){ S.posD=-900; spawnThermals(0); }
+  if(s==='spin'){ S.posD=-1100; spawnThermals(0); }
+  document.getElementById('lab').textContent={ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[s];
+}
+
+/* ---------------- controls ---------------- */
+let ctrl={de:0, da:0, dr:0}; // de>0 nose-up (pull), da>0 roll right, dr>0 right rudder
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+
+/* ---------------- lift curve with stall ---------------- */
+function clCurve(a){ // a in rad
+  const az=-AC.CL0/AC.CLa; // zero-lift alpha
+  if(a<=AC.aCrit){ return AC.CL0 + AC.CLa*a; }
+  // past critical: smooth drop
+  const over=a-AC.aCrit;
+  return Math.max(0.4, AC.CLmax - over*4.0);
+}
+
+/* ---------------- 6-DOF integration ---------------- */
+function physics(dt){
+  if(!S.alive) return;
+  // wind vector world (NED): wind blows FROM windDir
+  const wN=Math.cos(ENV.windDir)*ENV.windSpd, wE=Math.sin(ENV.windDir)*ENV.windSpd;
+  // air-relative velocity = ground velocity - wind velocity(of air mass)
+  const airN=S.vN - (-wN), airE=S.vE - (-wE), airD=S.vD; // air moves toward windDir+180
+  // relative velocity in body axes
+  const vb=w2b(S.q,[S.vN+wN, S.vE+wE, S.vD]); // include wind: airflow = ground vel + wind-from vector
+  let u=vb[0],v=vb[1],w=vb[2];
+  let V=Math.hypot(u,v,w); if(V<1)V=1;
+  const alpha=Math.atan2(w,u);
+  const beta=Math.asin(clamp(v/V,-1,1));
+  S.V=V; S.alpha=alpha; S.beta=beta;
+  const qbar=0.5*RHO*V*V;
+
+  // --- coefficients ---
+  let CL=clCurve(alpha);
+  const brakeCD=0.06*(S.brake/100); // [E] airbrake parasite add
+  let CD=AC.CD0+brakeCD + CL*CL/(Math.PI*AC.AR*AC.e);
+  const CY=AC.CYb*beta;
+
+  // --- asymmetric wing stall -> spin autorotation (emergent) ---
+  // local AoA at each wing from roll rate p (right wing down for p>0 sees higher AoA)
+  const yArm=AC.b*0.25;
+  const aL=alpha - S.p*yArm/V;   // left wing
+  const aR=alpha + S.p*yArm/V;   // right wing
+  const clL=clCurve(aL), clR=clCurve(aR);
+  const cdL=AC.CD0+clL*clL/(Math.PI*AC.AR*AC.e), cdR=AC.CD0+clR*clR/(Math.PI*AC.AR*AC.e);
+  // differential lift -> roll moment; differential drag -> yaw moment (autorotation)
+  const rollAsym = (clR-clL)*0.5*0.5;        // [E] scaled
+  const yawAsym  = (cdR-cdL)*0.5*0.6;        // [E] scaled
+
+  const stalled = alpha>AC.aCrit;
+
+  // --- aero forces (body) ---
+  const L=qbar*AC.S*CL, D=qbar*AC.S*CD, Yf=qbar*AC.S*CY;
+  const Fx = L*Math.sin(alpha) - D*Math.cos(alpha);
+  const Fz = -L*Math.cos(alpha) - D*Math.sin(alpha);
+  const Fy = Yf;
+
+  // --- aero moments (body) ---
+  const phat=S.p*AC.b/(2*V), rhat=S.r*AC.b/(2*V), qhat=S.q_*AC.c/(2*V);
+  let Cl = AC.Clb*beta + AC.Clp*phat + AC.Clr*rhat + AC.Clda*ctrl.da - rollAsym;
+  let Cm = AC.Cm0 + AC.Cma*alpha + AC.Cmq*qhat + AC.Cmde*ctrl.de;
+  let Cn = AC.Cnb*beta + AC.Cnp*phat + AC.Cnr*rhat + AC.Cndr*ctrl.dr + AC.Cnda*ctrl.da + yawAsym*Math.sign(S.p||1);
+  if(stalled){ // ailerons lose authority, rudder still works
+    Cl -= AC.Clda*ctrl.da*0.7;
+  }
+  const Lm=qbar*AC.S*AC.b*Cl, Mm=qbar*AC.S*AC.c*Cm, Nm=qbar*AC.S*AC.b*Cn;
+
+  // --- gravity (world) ---
+  const grav=[0,0,G*AC.m];
+  // total force world = R*(Fbody) + gravity
+  const Fb=[Fx,Fy,Fz];
+  const Fw=b2w(S.q,Fb);
+  const aN=(Fw[0]+grav[0])/AC.m, aE=(Fw[1]+grav[1])/AC.m, aD=(Fw[2]+grav[2])/AC.m;
+
+  // g-load (body z aero load / weight)
+  S.gLoad = -Fz/(AC.m*G);
+
+  // --- angular accel (Euler eqns, principal axes) ---
+  const pdot=(Lm+(AC.Iyy-AC.Izz)*S.q_*S.r)/AC.Ixx;
+  const qdot=(Mm+(AC.Izz-AC.Ixx)*S.r*S.p)/AC.Iyy;
+  const rdot=(Nm+(AC.Ixx-AC.Iyy)*S.p*S.q_)/AC.Izz;
+  S.p+=pdot*dt; S.q_+=qdot*dt; S.r+=rdot*dt;
+  // light artificial damping for numerical calm
+  S.p*=0.999; S.q_*=0.999; S.r*=0.999;
+
+  // --- integrate orientation quaternion ---
+  const [qw,qx,qy,qz]=S.q;
+  const ox=S.p,oy=S.q_,oz=S.r;
+  const dqw=0.5*(-qx*ox-qy*oy-qz*oz);
+  const dqx=0.5*( qw*ox+qy*oz-qz*oy);
+  const dqy=0.5*( qw*oy-qx*oz+qz*ox);
+  const dqz=0.5*( qw*oz+qx*oy-qy*ox);
+  S.q=quatNorm([qw+dqw*dt,qx+dqx*dt,qy+dqy*dt,qz+dqz*dt]);
+
+  // --- integrate translation (world) ---
+  S.vN+=aN*dt; S.vE+=aE*dt; S.vD+=aD*dt;
+  // atmosphere vertical air motion: ridge + thermal -> reduces descent (air going up = -D)
+  const altUp=-S.posD;
+  const up=ridgeLift(S.posN,S.posE,altUp)+thermalLift(S.posN,S.posE);
+  S.posN+=S.vN*dt; S.posE+=S.vE*dt; S.posD+=(S.vD-up)*dt; // subtract updraft from descent
+  S.vario=(up + (-S.vD)); // net climb estimate (air up minus sink)
+
+  S.spinning = stalled && Math.abs(S.p)>0.6;
+
+  // ground
+  const grd=terrainAlt(S.posN,S.posE);
+  if(altUp<=grd){ S.posD=-grd; S.alive=false; }
+}
+
+/* ---------------- audio vario + warnings ---------------- */
+let actx, varioOsc=null, varioGain=null;
+function initAudio(){try{if(!actx){actx=new(window.AudioContext||window.webkitAudioContext)();}}catch(e){}}
+function beep(f,d,t,v){try{initAudio();const o=actx.createOscillator(),g=actx.createGain();o.type=t;o.frequency.value=f;g.gain.value=v;
+  o.connect(g);g.connect(actx.destination);o.start();g.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+d);o.stop(actx.currentTime+d);}catch(e){}}
+let stallBeepOn=false, varioTimer=0;
+function audioUpdate(dt){
+  // audio vario: rising beeps in lift, solid tone in sink
+  varioTimer-=dt;
+  if(S.vario>0.3){ const rate=clamp(0.5-S.vario*0.05,0.08,0.5); if(varioTimer<=0){beep(500+S.vario*120,0.09,'sine',0.12);varioTimer=rate;} }
+  // stall warble
+  if(S.alpha>AC.aCrit-0.04 && !S.spinning){ if(!stallBeepOn){stallBeepOn=true;} if(varioTimer<=0){beep(360,0.12,'square',0.16);varioTimer=0.18;} }
+  else stallBeepOn=false;
+}
+function warnings(){
+  document.getElementById('stallW').classList.toggle('on', S.alpha>AC.aCrit-0.04 && !S.spinning && S.alive);
+  document.getElementById('spinW').classList.toggle('on', S.spinning && S.alive);
+}
+
+/* ---------------- render: PFD + moving map ---------------- */
+function draw(){
+  ctx.clearRect(0,0,W,H); ctx.fillStyle='#04070d'; ctx.fillRect(0,0,W,H);
+  const eul=quatToEuler(S.q); const roll=eul[0],pitch=eul[1],yaw=eul[2];
+  const cx=W/2, cy=H*0.36, R=Math.min(W*0.40,H*0.30);
+  attitude(cx,cy,R,roll,pitch);
+  asi(cx-R-Math.min(64,W*0.11),cy,R);
+  altvs(cx+R+Math.min(64,W*0.11),cy,R);
+  aoaTape(cx,cy,R);
+  gMeter(cx+R+Math.min(64,W*0.11),cy+R*0.9,R);
+  slip(cx,cy+R+22,R,roll);
+  hdg(cx,cy-R-20,yaw);
+  miniMap(yaw);
+  if(!S.alive) crashed();
+  warnings();
+}
+function attitude(cx,cy,R,roll,pitch){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.clip();
+  ctx.translate(cx,cy);ctx.rotate(-roll);
+  const pp=(pitch*180/Math.PI)*R/45;
+  ctx.translate(0,pp);
+  ctx.fillStyle='#1c6fd0';ctx.fillRect(-R*2,-R*3,R*4,R*3);
+  ctx.fillStyle='#7a4a1e';ctx.fillRect(-R*2,0,R*4,R*3);
+  ctx.strokeStyle='#eaf4ff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-R*2,0);ctx.lineTo(R*2,0);ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.8)';ctx.fillStyle='#eaf4ff';ctx.font='10px Share Tech Mono';ctx.textAlign='center';
+  for(let p=-30;p<=30;p+=10){if(!p)continue;const y=-p*R/45,wd=p%20===0?R*0.26:R*0.14;
+    ctx.beginPath();ctx.moveTo(-wd,y);ctx.lineTo(wd,y);ctx.stroke();
+    if(p%20===0){ctx.fillText(Math.abs(p),-wd-12,y+3);ctx.fillText(Math.abs(p),wd+12,y+3);}}
+  ctx.restore();
+  ctx.strokeStyle='#1c3354';ctx.lineWidth=6;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();
+  ctx.strokeStyle='#ffd23b';ctx.lineWidth=4;ctx.lineCap='round';ctx.beginPath();
+  ctx.moveTo(cx-R*0.5,cy);ctx.lineTo(cx-R*0.16,cy);ctx.lineTo(cx-R*0.08,cy+R*0.09);
+  ctx.moveTo(cx+R*0.5,cy);ctx.lineTo(cx+R*0.16,cy);ctx.lineTo(cx+R*0.08,cy+R*0.09);ctx.stroke();
+  ctx.fillStyle='#ffd23b';ctx.beginPath();ctx.arc(cx,cy,3,0,7);ctx.fill();
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(-roll);
+  ctx.fillStyle='#ffd23b';ctx.beginPath();ctx.moveTo(0,-R);ctx.lineTo(-7,-R+12);ctx.lineTo(7,-R+12);ctx.fill();ctx.restore();
+}
+function gauge(cx,cy,R,label){ctx.fillStyle='rgba(10,18,36,0.9)';ctx.strokeStyle='#1c3354';ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(cx,cy,R*0.44,0,7);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='center';ctx.fillText(label,cx,cy-R*0.28);}
+function asi(cx,cy,R){gauge(cx,cy,R,'IAS kt');const kt=S.V/KT;
+  ctx.fillStyle=kt<38?'#ff3b3b':'#7af0c0';ctx.font='700 24px Share Tech Mono';ctx.textAlign='center';ctx.fillText(Math.round(kt),cx,cy+7);
+  ctx.fillStyle='#6f8fc0';ctx.font='8px Share Tech Mono';ctx.fillText('Vs35 Vne150',cx,cy+R*0.30);}
+function altvs(cx,cy,R){gauge(cx,cy,R,'ALT ft');const ft=(-S.posD)*3.281;
+  ctx.fillStyle='#cfe3ff';ctx.font='700 20px Share Tech Mono';ctx.textAlign='center';ctx.fillText(Math.round(ft),cx,cy+3);
+  const v=S.vario;ctx.fillStyle=v>=0?'#7af0c0':'#ff9b6a';ctx.font='11px Share Tech Mono';
+  ctx.fillText((v>=0?'\u25B2':'\u25BC')+' '+Math.abs(v).toFixed(1)+'m/s',cx,cy+R*0.30);}
+function aoaTape(cx,cy,R){const x=12,top=cy-R*0.7,h=R*1.4;
+  ctx.fillStyle='rgba(10,18,36,0.85)';ctx.fillRect(x-2,top,15,h);
+  const aMax=20*Math.PI/180,critY=top+(1-AC.aCrit/aMax)*h;
+  ctx.fillStyle='rgba(255,59,59,0.5)';ctx.fillRect(x-2,top,15,Math.max(0,critY-top));
+  ctx.fillStyle='rgba(122,240,192,0.35)';ctx.fillRect(x-2,Math.max(top,critY),15,top+h-Math.max(top,critY));
+  const py=top+(1-clamp(S.alpha,-0.05,aMax)/aMax)*h;
+  ctx.fillStyle='#ffd23b';ctx.beginPath();ctx.moveTo(x+15,py);ctx.lineTo(x+25,py-6);ctx.lineTo(x+25,py+6);ctx.fill();
+  ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='left';ctx.fillText('AoA',x-2,top-5);}
+function gMeter(cx,cy,R){ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='center';
+  ctx.fillStyle=Math.abs(S.gLoad)>4?'#ff3b3b':'#9fb6da';ctx.font='12px Share Tech Mono';
+  ctx.fillText('g '+S.gLoad.toFixed(1),cx,cy);}
+function slip(cx,cy,R,roll){const wd=R*0.7;ctx.strokeStyle='#1c3354';ctx.lineWidth=2;ctx.strokeRect(cx-wd/2,cy-11,wd,22);
+  ctx.beginPath();ctx.moveTo(cx-10,cy-11);ctx.lineTo(cx-10,cy+11);ctx.moveTo(cx+10,cy-11);ctx.lineTo(cx+10,cy+11);ctx.stroke();
+  const bx=clamp(cx+S.beta*420,cx-wd/2+9,cx+wd/2-9);
+  ctx.fillStyle=Math.abs(S.beta)<0.04?'#7af0c0':'#ffd23b';ctx.beginPath();ctx.arc(bx,cy,8,0,7);ctx.fill();
+  ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='center';ctx.fillText('SLIP',cx,cy+24);}
+function hdg(cx,cy,yaw){let d=(yaw*180/Math.PI)%360;if(d<0)d+=360;
+  ctx.fillStyle='#9fb6da';ctx.font='13px Share Tech Mono';ctx.textAlign='center';ctx.fillText('HDG '+String(Math.round(d)).padStart(3,'0'),cx,cy+4);}
+function miniMap(yaw){const mw=Math.min(150,W*0.26),mx=W-mw-12,my=H-mw-150,sc=mw/8000;
+  ctx.save();ctx.fillStyle='rgba(8,14,28,0.9)';ctx.strokeStyle='#1c3354';ctx.lineWidth=2;
+  ctx.fillRect(mx,my,mw,mw);ctx.strokeRect(mx,my,mw,mw);
+  const ccx=mx+mw/2,ccy=my+mw/2;
+  const dirN=Math.cos(ENV.ridgeHeading),dirE=Math.sin(ENV.ridgeHeading);
+  ctx.save();ctx.beginPath();ctx.rect(mx,my,mw,mw);ctx.clip();
+  function toMap(N,E){return [ccx + (E-S.posE)*sc, ccy - (N-S.posN)*sc];}
+  // ridge
+  ctx.strokeStyle='rgba(160,110,60,0.8)';ctx.lineWidth=6;ctx.beginPath();
+  let a=toMap(S.posN+dirN*6000, S.posE+dirE*6000), b=toMap(S.posN-dirN*6000,S.posE-dirE*6000);
+  ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+  // thermals
+  for(const t of ENV.thermals){const p=toMap(t.x,t.y);ctx.strokeStyle='rgba(122,240,192,0.7)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(p[0],p[1],t.r*sc,0,7);ctx.stroke();}
+  // glider (centre) with heading
+  ctx.translate(ccx,ccy);ctx.rotate(yaw);
+  ctx.fillStyle='#39d0ff';ctx.beginPath();ctx.moveTo(0,-7);ctx.lineTo(5,6);ctx.lineTo(-5,6);ctx.fill();
+  ctx.restore();
+  // wind arrow
+  ctx.save();ctx.translate(mx+16,my+16);ctx.rotate(ENV.windDir+Math.PI);
+  ctx.strokeStyle='#9fb6da';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(0,8);ctx.moveTo(0,8);ctx.lineTo(-3,4);ctx.moveTo(0,8);ctx.lineTo(3,4);ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle='#6f8fc0';ctx.font='8px Share Tech Mono';ctx.textAlign='left';ctx.fillText('DUNSTABLE',mx+4,my+mw-6);
+  ctx.restore();}
+function crashed(){ctx.fillStyle='rgba(120,10,10,0.5)';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#fff';ctx.font='700 28px Chakra Petch';ctx.textAlign='center';ctx.fillText('GROUND CONTACT',W/2,H*0.5);
+  ctx.font='14px Chakra Petch';ctx.fillText('tap RESET',W/2,H*0.5+30);}
+
+/* ---------------- controls binding ---------------- */
+function bindPad(padId,knobId,onMove,xOnly){
+  const pad=document.getElementById(padId),knob=document.getElementById(knobId);let active=null;
+  const rect=()=>pad.getBoundingClientRect();
+  function set(cx,cy){const r=rect();let nx=clamp((cx-r.left)/r.width*2-1,-1,1),ny=clamp((cy-r.top)/r.height*2-1,-1,1);
+    if(xOnly)ny=0;knob.style.left=(r.width/2+nx*(r.width/2-24)-22)+'px';knob.style.top=(r.height/2+ny*(r.height/2-24)-22)+'px';onMove(nx,ny);}
+  function center(){const r=rect();knob.style.left=(r.width/2-22)+'px';knob.style.top=(r.height/2-22)+'px';onMove(0,0);}
+  pad.addEventListener('touchstart',e=>{active=e.changedTouches[0].identifier;const t=e.changedTouches[0];set(t.clientX,t.clientY);e.preventDefault();},{passive:false});
+  pad.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===active)set(t.clientX,t.clientY);e.preventDefault();},{passive:false});
+  function end(e){for(const t of e.changedTouches)if(t.identifier===active){active=null;center();}e.preventDefault();}
+  pad.addEventListener('touchend',end,{passive:false});pad.addEventListener('touchcancel',end,{passive:false});
+  let md=false;pad.addEventListener('mousedown',e=>{md=true;set(e.clientX,e.clientY);});
+  addEventListener('mousemove',e=>{if(md)set(e.clientX,e.clientY);});addEventListener('mouseup',()=>{if(md){md=false;center();}});
+  center();
+}
+// stick: drag down (ny>0) = pull = nose up (de>0). roll: nx>0 = roll right (da>0)
+bindPad('stickPad','stickKnob',(nx,ny)=>{ctrl.da=nx; ctrl.de=ny;});
+bindPad('rudderPad','rudderKnob',(nx)=>{ctrl.dr=nx;},true);
+document.getElementById('brake').addEventListener('input',e=>{S.brake=+e.target.value;});
+
+/* ---------------- loop ---------------- */
+let tPrev=0,running=false;
+function frame(t){
+  if(running){
+    let dt=(t-tPrev)/1000; if(!dt||dt>0.05)dt=0.016; tPrev=t;
+    // substep for stability
+    const N=4,h=dt/N; for(let i=0;i<N;i++) physics(h);
+    audioUpdate(dt); draw();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---------------- menu ---------------- */
+document.querySelectorAll('.scn button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.scn button').forEach(x=>x.style.opacity=0.5);b.style.opacity=1;setup(b.dataset.scn);});
+document.getElementById('startBtn').onclick=()=>{initAudio();setup(scenario);document.getElementById('brake').value=0;document.getElementById('menu').classList.add('hidden');running=true;tPrev=performance.now();};
+document.getElementById('resetBtn').onclick=()=>{running=false;document.getElementById('menu').classList.remove('hidden');};
+
+resize();setup('ridge');
+</script>
+</body>
+</html>
