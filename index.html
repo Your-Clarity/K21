@@ -119,8 +119,8 @@ const AC={
   Clda: 0.18,        // [E] aileron power
   Cnb: 0.07,         // [E] weathercock stability (stable, +)
   Cnp: -0.02,        // [E] yaw due roll
-  Cnr: -0.05,        // [E] yaw damping
-  Cndr: -0.08,       // [E] rudder power (dr>0 = yaw right -> Cn negative? sign tuned below)
+  Cnr: -0.08,        // [E] yaw damping (a bit stronger for steadier yaw)
+  Cndr: 0.16,        // [E] rudder power: dr>0 (right rudder) -> nose yaws RIGHT (positive Cn). stronger so its effect is clear
   Cnda: -0.01        // [E] adverse yaw from aileron
 };
 const RHO=1.225, G=9.81, KT=0.514444; // m/s per knot
@@ -394,17 +394,18 @@ function draw(){
   ctx.strokeStyle='#3a3f46'; ctx.lineWidth=3; ctx.beginPath();
   ctx.moveTo(0,horizonH-6); ctx.quadraticCurveTo(W*0.5,horizonH-26,W,horizonH-6); ctx.stroke();
 
-  // ---- compact instrument strip along the coaming ----
-  const gR=Math.min(W*0.11, (H-horizonH)*0.34);
-  const rowY=horizonH + (H-horizonH)*0.46;
-  const aR=gR*1.18;
-  asiGauge(W*0.12, rowY, gR);
-  attitudeGauge(W*0.31, rowY, aR, roll, pitch);
-  varioGauge(W*0.50, rowY, gR);
-  altGauge(W*0.69, rowY, gR);
-  compassGauge(W*0.88, rowY, gR, yaw);
-  slipStrip(W*0.31, rowY+aR+12, aR);
-  gAoaGauge(W*0.50, rowY+gR+gR*0.55, gR*0.7);
+  // ---- compact instrument cluster, CENTERED so it clears the corner control pads ----
+  const gR=Math.min(W*0.085, (H-horizonH)*0.32);
+  const rowY=horizonH + (H-horizonH)*0.42;
+  const aR=gR*1.15;
+  // five gauges spread across the central band (0.27..0.73), corners left free for pads
+  asiGauge(W*0.29, rowY, gR);
+  attitudeGauge(W*0.40, rowY, aR, roll, pitch);
+  varioGauge(W*0.51, rowY, gR);
+  altGauge(W*0.62, rowY, gR);
+  compassGauge(W*0.73, rowY, gR, yaw);
+  slipStrip(W*0.40, rowY+aR+10, aR);
+  gAoaGauge(W*0.51, rowY+gR+gR*0.5, gR*0.66);
 
   miniMap(yaw);
   ctx.fillStyle='#eaf4ff';ctx.font='12px Chakra Petch';ctx.textAlign='left';
@@ -631,7 +632,7 @@ function slipStrip(cx,cy,R){
   const bx=Math.max(cx-wd/2+8,Math.min(cx+wd/2-8,cx+S.beta*380)); // ball opposite the string
   ctx.fillStyle=Math.abs(S.beta)<0.04?'#7af0c0':'#ffd23b';ctx.beginPath();ctx.arc(bx,cy,8,0,7);ctx.fill();
 }
-function miniMap(yaw){const mw=Math.min(140,W*0.24),mx=W-mw-12,my=H-mw-150,sc=mw/8000;
+function miniMap(yaw){const mw=Math.min(120,W*0.16),mx=W-mw-14,my=60,sc=mw/8000;
   ctx.save();ctx.fillStyle='rgba(8,14,28,0.92)';ctx.strokeStyle='#3a3f46';ctx.lineWidth=2;
   ctx.fillRect(mx,my,mw,mw);ctx.strokeRect(mx,my,mw,mw);
   const ccx=mx+mw/2,ccy=my+mw/2;
