@@ -14,10 +14,10 @@
 
   .pad{position:fixed;bottom:16px;border-radius:18px;background:rgba(14,24,44,0.72);
     border:2px solid #1c3354;touch-action:none;z-index:5;}
-  #stickPad{left:14px;width:140px;height:140px;}
-  #rudderPad{right:14px;width:190px;height:78px;border-radius:40px;bottom:46px;}
-  .pad .lbl{position:absolute;top:6px;left:0;right:0;text-align:center;font-size:9px;letter-spacing:2px;color:#6f8fc0;}
-  #stickKnob,#rudderKnob{position:absolute;width:44px;height:44px;border-radius:50%;pointer-events:none;}
+  #stickPad{left:14px;width:200px;height:200px;}
+  #rudderPad{right:14px;width:250px;height:96px;border-radius:48px;bottom:46px;}
+  .pad .lbl{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:10px;letter-spacing:2px;color:#6f8fc0;}
+  #stickKnob,#rudderKnob{position:absolute;width:58px;height:58px;border-radius:50%;pointer-events:none;}
   #stickKnob{background:radial-gradient(circle at 40% 35%,#39d0ff,#0b6f9c);box-shadow:0 0 16px rgba(57,208,255,0.7);}
   #rudderKnob{background:radial-gradient(circle at 40% 35%,#ff7adf,#9c2b78);box-shadow:0 0 16px rgba(255,122,223,0.7);}
 
@@ -109,10 +109,10 @@ const AC={
   e: 0.90,           // [E] Oswald efficiency
   CYb: -0.30,        // [E] side force due sideslip
   // moments (per rad unless noted)
-  Cm0: 0.06,         // [E] trims near cruise
-  Cma: -0.7,         // [E] pitch stiffness (stable)
-  Cmq: -9.0,         // [E] pitch damping
-  Cmde: 1.3,         // [E] elevator power (de_cmd>0 = nose up)
+  Cm0: 0.30,         // [E] trims at ~5deg AoA (best-glide)
+  Cma: -3.5,         // [E] pitch stiffness (stable short-period)
+  Cmq: -40.0,        // [E] strong pitch damping (numerical + realistic short-period damping)
+  Cmde: 2.0,         // [E] elevator power (de_cmd>0 = nose up)
   Clb: -0.08,        // [E] dihedral effect
   Clp: -0.45,        // [E] roll damping
   Clr: 0.06,         // [E] roll due yaw
@@ -188,17 +188,27 @@ function terrainAlt(posN,posE){ // simple escarpment: ground rises on SE side of
 let scenario='ridge';
 function setup(s){
   scenario=s;
-  const e=quatFromEuler(0,0, 45*Math.PI/180); // heading NE along ridge
-  S={ posN:0, posE:-300, posD:-600,  // start 600m up, NW of ridge
+  // trimmed glide: best-glide ~26 m/s, glide angle ~1.7deg down, trim AoA ~5deg
+  const spd=26;
+  const trimAoA=5*Math.PI/180;       // body sits at this AoA in the airflow
+  const glideAngle=1.7*Math.PI/180;  // flight path descends this much
+  const pitch=trimAoA-glideAngle;    // body pitch above horizon (slightly nose-up of path)
+  const hdg=45*Math.PI/180;          // NE along ridge
+  const e=quatFromEuler(0,pitch,hdg);
+  S={ posN:0, posE:-300, posD:-600,
       vN:0,vE:0,vD:0, q:e, p:0,q_:0,r:0,
-      V:26, alpha:0, beta:0, gLoad:1, vario:0, alive:true, brake:0,
+      V:spd, alpha:trimAoA, beta:0, gLoad:1, vario:0, alive:true, brake:0,
       spinning:false };
-  // initialise world velocity along heading at trim speed
-  const spd=26; const fwd=b2w(e,[1,0,0]);
-  S.vN=fwd[0]*spd; S.vE=fwd[1]*spd; S.vD=fwd[2]*spd;
+  // velocity along the descending flight path (not the body axis)
+  const fpN=Math.cos(glideAngle)*Math.cos(hdg);
+  const fpE=Math.cos(glideAngle)*Math.sin(hdg);
+  const fpD=Math.sin(glideAngle); // descending = +D
+  S.vN=fpN*spd; S.vE=fpE*spd; S.vD=fpD*spd;
+  // small nose-up trim so it holds the glide hands-off-ish
+  ctrl={de:0,da:0,dr:0};
   ENV.windDir=315*Math.PI/180; ENV.windSpd=7;
-  if(s==='ridge'){ ENV.windSpd=8; S.posE=-200; S.posD=-220; spawnThermals(2);}
-  if(s==='thermal'){ ENV.windSpd=3; S.posD=-450; spawnThermals(7);}
+  if(s==='ridge'){ ENV.windSpd=8; S.posE=-200; S.posD=-260; spawnThermals(2);}
+  if(s==='thermal'){ ENV.windSpd=3; S.posD=-500; spawnThermals(7);}
   if(s==='stall'){ S.posD=-900; spawnThermals(0); }
   if(s==='spin'){ S.posD=-1100; spawnThermals(0); }
   document.getElementById('lab').textContent={ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[s];
@@ -220,12 +230,12 @@ function clCurve(a){ // a in rad
 /* ---------------- 6-DOF integration ---------------- */
 function physics(dt){
   if(!S.alive) return;
-  // wind vector world (NED): wind blows FROM windDir
-  const wN=Math.cos(ENV.windDir)*ENV.windSpd, wE=Math.sin(ENV.windDir)*ENV.windSpd;
-  // air-relative velocity = ground velocity - wind velocity(of air mass)
-  const airN=S.vN - (-wN), airE=S.vE - (-wE), airD=S.vD; // air moves toward windDir+180
-  // relative velocity in body axes
-  const vb=w2b(S.q,[S.vN+wN, S.vE+wE, S.vD]); // include wind: airflow = ground vel + wind-from vector
+  // wind blows FROM windDir, so the air mass moves TOWARD windDir+180.
+  // air velocity vector (world NED):
+  const wN=-Math.cos(ENV.windDir)*ENV.windSpd, wE=-Math.sin(ENV.windDir)*ENV.windSpd;
+  // airflow over the glider = ground velocity - air-mass velocity
+  const relN=S.vN - wN, relE=S.vE - wE, relD=S.vD;
+  const vb=w2b(S.q,[relN,relE,relD]);
   let u=vb[0],v=vb[1],w=vb[2];
   let V=Math.hypot(u,v,w); if(V<1)V=1;
   const alpha=Math.atan2(w,u);
@@ -236,7 +246,8 @@ function physics(dt){
   // --- coefficients ---
   let CL=clCurve(alpha);
   const brakeCD=0.06*(S.brake/100); // [E] airbrake parasite add
-  let CD=AC.CD0+brakeCD + CL*CL/(Math.PI*AC.AR*AC.e);
+  const hiSpeed=0.00004*Math.max(0,V-40)*Math.max(0,V-40); // [E] high-speed drag rise -> dive bottoms near Vne
+  let CD=AC.CD0+brakeCD+hiSpeed + CL*CL/(Math.PI*AC.AR*AC.e);
   const CY=AC.CYb*beta;
 
   // --- asymmetric wing stall -> spin autorotation (emergent) ---
@@ -283,8 +294,8 @@ function physics(dt){
   const qdot=(Mm+(AC.Izz-AC.Ixx)*S.r*S.p)/AC.Iyy;
   const rdot=(Nm+(AC.Ixx-AC.Iyy)*S.p*S.q_)/AC.Izz;
   S.p+=pdot*dt; S.q_+=qdot*dt; S.r+=rdot*dt;
-  // light artificial damping for numerical calm
-  S.p*=0.999; S.q_*=0.999; S.r*=0.999;
+  // numerical calm (also stands in for unmodelled structural damping)
+  S.p*=0.995; S.q_*=0.995; S.r*=0.995;
 
   // --- integrate orientation quaternion ---
   const [qw,qx,qy,qz]=S.q;
@@ -329,96 +340,189 @@ function warnings(){
   document.getElementById('spinW').classList.toggle('on', S.spinning && S.alive);
 }
 
-/* ---------------- render: PFD + moving map ---------------- */
+/* ---------------- render: realistic round-gauge K21 panel ---------------- */
 function draw(){
-  ctx.clearRect(0,0,W,H); ctx.fillStyle='#04070d'; ctx.fillRect(0,0,W,H);
+  ctx.clearRect(0,0,W,H);
+  // panel backdrop (grey GRP like the real cockpit)
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#2a2e33'); grad.addColorStop(1,'#16191d');
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
   const eul=quatToEuler(S.q); const roll=eul[0],pitch=eul[1],yaw=eul[2];
-  const cx=W/2, cy=H*0.36, R=Math.min(W*0.40,H*0.30);
-  attitude(cx,cy,R,roll,pitch);
-  asi(cx-R-Math.min(64,W*0.11),cy,R);
-  altvs(cx+R+Math.min(64,W*0.11),cy,R);
-  aoaTape(cx,cy,R);
-  gMeter(cx+R+Math.min(64,W*0.11),cy+R*0.9,R);
-  slip(cx,cy+R+22,R,roll);
-  hdg(cx,cy-R-20,yaw);
+
+  // layout: scale instrument size to screen, arrange like ASK-21 panel
+  const port = W<H; // portrait?
+  const gR = Math.min(W,H)* (port?0.14:0.12);   // gauge radius
+  // panel occupies upper ~55% of screen, controls below
+  const topY = gR+40;
+  const midY = topY + gR*2.2;
+  // top row: ASI | Attitude | Altimeter
+  const cxA = W*0.5;                 // attitude centre (slightly larger)
+  const aR = gR*1.25;
+  asiGauge(W*0.18, topY, gR);
+  altGauge(W*0.82, topY, gR);
+  attitudeGauge(cxA, topY+gR*0.2, aR, roll, pitch);
+  // bottom row: vario | compass | g+AoA
+  varioGauge(W*0.18, midY, gR);
+  compassGauge(W*0.5, midY, gR, yaw);
+  gAoaGauge(W*0.82, midY, gR);
+  // slip ball under attitude
+  slipStrip(cxA, topY+gR*0.2+aR+18, aR);
+  // mini map + label
   miniMap(yaw);
+  ctx.fillStyle='#cfe3ff';ctx.font='12px Chakra Petch';ctx.textAlign='left';
+  ctx.fillText(({ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[scenario])||'',14,22);
   if(!S.alive) crashed();
   warnings();
 }
-function attitude(cx,cy,R,roll,pitch){
+// shared bezel
+function bezel(cx,cy,R,label){
+  ctx.save();
+  ctx.fillStyle='#0a0c0f'; ctx.beginPath(); ctx.arc(cx,cy,R*1.08,0,7); ctx.fill();
+  ctx.strokeStyle='#3a3f46'; ctx.lineWidth=R*0.10; ctx.beginPath(); ctx.arc(cx,cy,R*1.03,0,7); ctx.stroke();
+  ctx.fillStyle='#070809'; ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='#7d8896'; ctx.font='700 '+(R*0.16)+'px Chakra Petch'; ctx.textAlign='center';
+  ctx.fillText(label,cx,cy+R*0.55);
+}
+function needle(cx,cy,R,ang,len,wid,col){
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(ang);
+  ctx.strokeStyle=col;ctx.lineWidth=wid;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(0,R*0.12);ctx.lineTo(0,-R*len);ctx.stroke();
+  ctx.fillStyle=col;ctx.beginPath();ctx.arc(0,0,wid*1.4,0,7);ctx.fill();ctx.restore();
+}
+// ASI: round dial 0-150 kt
+function asiGauge(cx,cy,R){
+  bezel(cx,cy,R,'KNOTS');
+  const kt=S.V/KT, vmin=0,vmax=160;
+  // arc ticks every 10kt, sweep 240deg from -120 to +120 (top centre = 80)
+  ctx.strokeStyle='#cfd6de';ctx.fillStyle='#cfd6de';ctx.textAlign='center';ctx.font=(R*0.13)+'px Share Tech Mono';
+  const a0=-Math.PI*0.75, a1=Math.PI*0.75;
+  for(let v=vmin;v<=vmax;v+=10){const f=(v-vmin)/(vmax-vmin);const a=a0+f*(a1-a0);
+    const x1=cx+Math.sin(a)*R*0.88,y1=cy-Math.cos(a)*R*0.88,x2=cx+Math.sin(a)*R*0.98,y2=cy-Math.cos(a)*R*0.98;
+    ctx.lineWidth=v%50===0?3:1.5;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    if(v%50===0){const lx=cx+Math.sin(a)*R*0.70,ly=cy-Math.cos(a)*R*0.70;ctx.fillText(v,lx,ly+R*0.05);}}
+  // colour arcs: white stall-area near 35, green normal, yellow caution, red Vne
+  function arc(va,vb,col){const fa=(va-vmin)/(vmax-vmin),fb=(vb-vmin)/(vmax-vmin);
+    ctx.strokeStyle=col;ctx.lineWidth=R*0.06;ctx.beginPath();ctx.arc(cx,cy,R*0.80,a0+fa*(a1-a0)-Math.PI/2,a0+fb*(a1-a0)-Math.PI/2);ctx.stroke();}
+  arc(35,80,'#2faa55'); arc(80,120,'#d9b53b'); arc(120,160,'#d23b3b');
+  // needle
+  const f=(Math.max(vmin,Math.min(vmax,kt))-vmin)/(vmax-vmin);
+  needle(cx,cy,R,a0+f*(a1-a0),0.78,3,kt<37?'#ff5b5b':'#ffffff');
+}
+// Altimeter: thousands needle + hundreds, label feet
+function altGauge(cx,cy,R){
+  bezel(cx,cy,R,'ALT x100ft');
+  const ft=(-S.posD)*3.281;
+  ctx.strokeStyle='#cfd6de';ctx.fillStyle='#cfd6de';ctx.textAlign='center';ctx.font=(R*0.16)+'px Share Tech Mono';
+  for(let i=0;i<10;i++){const a=i/10*Math.PI*2;const x1=cx+Math.sin(a)*R*0.88,y1=cy-Math.cos(a)*R*0.88,x2=cx+Math.sin(a)*R*0.98,y2=cy-Math.cos(a)*R*0.98;
+    ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    const lx=cx+Math.sin(a)*R*0.68,ly=cy-Math.cos(a)*R*0.68;ctx.fillText(i,lx,ly+R*0.06);}
+  const hundreds=(ft%1000)/1000, thousands=(ft%10000)/10000;
+  needle(cx,cy,R,thousands*Math.PI*2,0.55,5,'#fff');   // short fat = thousands
+  needle(cx,cy,R,hundreds*Math.PI*2,0.85,3,'#fff');    // long thin = hundreds
+  ctx.fillStyle='#9fb6da';ctx.font=(R*0.16)+'px Share Tech Mono';ctx.fillText(Math.round(ft)+'ft',cx,cy+R*0.40);
+}
+// Vario: +/-5 m/s, needle, audio handled elsewhere
+function varioGauge(cx,cy,R){
+  bezel(cx,cy,R,'VARIO m/s');
+  const v=Math.max(-5,Math.min(5,S.vario));
+  ctx.strokeStyle='#cfd6de';ctx.fillStyle='#cfd6de';ctx.textAlign='center';ctx.font=(R*0.13)+'px Share Tech Mono';
+  const a0=-Math.PI*0.75,a1=Math.PI*0.75; // -5 at left, +5 at right, 0 top
+  for(let val=-5;val<=5;val++){const f=(val+5)/10;const a=a0+f*(a1-a0);
+    const x1=cx+Math.sin(a)*R*0.86,y1=cy-Math.cos(a)*R*0.86,x2=cx+Math.sin(a)*R*0.98,y2=cy-Math.cos(a)*R*0.98;
+    ctx.lineWidth=val%5===0?3:1.5;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    if(val%5===0||val===0){const lx=cx+Math.sin(a)*R*0.68,ly=cy-Math.cos(a)*R*0.68;ctx.fillText(val,lx,ly+R*0.05);}}
+  // green up half, red down half
+  ctx.lineWidth=R*0.05;ctx.strokeStyle='#2faa55';ctx.beginPath();ctx.arc(cx,cy,R*0.80,-Math.PI/2,a1-Math.PI/2);ctx.stroke();
+  ctx.strokeStyle='#d23b3b';ctx.beginPath();ctx.arc(cx,cy,R*0.80,a0-Math.PI/2,-Math.PI/2);ctx.stroke();
+  const f=(v+5)/10;needle(cx,cy,R,a0+f*(a1-a0),0.80,3,'#ffd23b');
+}
+// Attitude indicator
+function attitudeGauge(cx,cy,R,roll,pitch){
   ctx.save();ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.clip();
   ctx.translate(cx,cy);ctx.rotate(-roll);
-  const pp=(pitch*180/Math.PI)*R/45;
-  ctx.translate(0,pp);
-  ctx.fillStyle='#1c6fd0';ctx.fillRect(-R*2,-R*3,R*4,R*3);
-  ctx.fillStyle='#7a4a1e';ctx.fillRect(-R*2,0,R*4,R*3);
-  ctx.strokeStyle='#eaf4ff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-R*2,0);ctx.lineTo(R*2,0);ctx.stroke();
-  ctx.strokeStyle='rgba(255,255,255,0.8)';ctx.fillStyle='#eaf4ff';ctx.font='10px Share Tech Mono';ctx.textAlign='center';
-  for(let p=-30;p<=30;p+=10){if(!p)continue;const y=-p*R/45,wd=p%20===0?R*0.26:R*0.14;
+  const pp=(pitch*180/Math.PI)*R/35;ctx.translate(0,pp);
+  ctx.fillStyle='#2c7fc0';ctx.fillRect(-R*2,-R*3,R*4,R*3);
+  ctx.fillStyle='#7a5a30';ctx.fillRect(-R*2,0,R*4,R*3);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-R*2,0);ctx.lineTo(R*2,0);ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.85)';ctx.fillStyle='#fff';ctx.font=(R*0.10)+'px Share Tech Mono';ctx.textAlign='center';
+  for(let p=-30;p<=30;p+=10){if(!p)continue;const y=-p*R/35,wd=p%20===0?R*0.30:R*0.16;
     ctx.beginPath();ctx.moveTo(-wd,y);ctx.lineTo(wd,y);ctx.stroke();
-    if(p%20===0){ctx.fillText(Math.abs(p),-wd-12,y+3);ctx.fillText(Math.abs(p),wd+12,y+3);}}
+    if(p%20===0){ctx.fillText(Math.abs(p),-wd-R*0.13,y+R*0.04);ctx.fillText(Math.abs(p),wd+R*0.13,y+R*0.04);}}
   ctx.restore();
-  ctx.strokeStyle='#1c3354';ctx.lineWidth=6;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();
-  ctx.strokeStyle='#ffd23b';ctx.lineWidth=4;ctx.lineCap='round';ctx.beginPath();
-  ctx.moveTo(cx-R*0.5,cy);ctx.lineTo(cx-R*0.16,cy);ctx.lineTo(cx-R*0.08,cy+R*0.09);
-  ctx.moveTo(cx+R*0.5,cy);ctx.lineTo(cx+R*0.16,cy);ctx.lineTo(cx+R*0.08,cy+R*0.09);ctx.stroke();
-  ctx.fillStyle='#ffd23b';ctx.beginPath();ctx.arc(cx,cy,3,0,7);ctx.fill();
-  ctx.save();ctx.translate(cx,cy);ctx.rotate(-roll);
-  ctx.fillStyle='#ffd23b';ctx.beginPath();ctx.moveTo(0,-R);ctx.lineTo(-7,-R+12);ctx.lineTo(7,-R+12);ctx.fill();ctx.restore();
+  ctx.strokeStyle='#3a3f46';ctx.lineWidth=R*0.10;ctx.beginPath();ctx.arc(cx,cy,R*1.03,0,7);ctx.stroke();
+  // fixed wings
+  ctx.strokeStyle='#ffcf3b';ctx.lineWidth=4;ctx.lineCap='round';ctx.beginPath();
+  ctx.moveTo(cx-R*0.55,cy);ctx.lineTo(cx-R*0.18,cy);ctx.lineTo(cx-R*0.10,cy+R*0.10);
+  ctx.moveTo(cx+R*0.55,cy);ctx.lineTo(cx+R*0.18,cy);ctx.lineTo(cx+R*0.10,cy+R*0.10);ctx.stroke();
+  ctx.fillStyle='#ffcf3b';ctx.beginPath();ctx.arc(cx,cy,3,0,7);ctx.fill();
+  // roll pointer
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(-roll);ctx.fillStyle='#ffcf3b';
+  ctx.beginPath();ctx.moveTo(0,-R);ctx.lineTo(-7,-R+13);ctx.lineTo(7,-R+13);ctx.fill();ctx.restore();
 }
-function gauge(cx,cy,R,label){ctx.fillStyle='rgba(10,18,36,0.9)';ctx.strokeStyle='#1c3354';ctx.lineWidth=3;
-  ctx.beginPath();ctx.arc(cx,cy,R*0.44,0,7);ctx.fill();ctx.stroke();
-  ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='center';ctx.fillText(label,cx,cy-R*0.28);}
-function asi(cx,cy,R){gauge(cx,cy,R,'IAS kt');const kt=S.V/KT;
-  ctx.fillStyle=kt<38?'#ff3b3b':'#7af0c0';ctx.font='700 24px Share Tech Mono';ctx.textAlign='center';ctx.fillText(Math.round(kt),cx,cy+7);
-  ctx.fillStyle='#6f8fc0';ctx.font='8px Share Tech Mono';ctx.fillText('Vs35 Vne150',cx,cy+R*0.30);}
-function altvs(cx,cy,R){gauge(cx,cy,R,'ALT ft');const ft=(-S.posD)*3.281;
-  ctx.fillStyle='#cfe3ff';ctx.font='700 20px Share Tech Mono';ctx.textAlign='center';ctx.fillText(Math.round(ft),cx,cy+3);
-  const v=S.vario;ctx.fillStyle=v>=0?'#7af0c0':'#ff9b6a';ctx.font='11px Share Tech Mono';
-  ctx.fillText((v>=0?'\u25B2':'\u25BC')+' '+Math.abs(v).toFixed(1)+'m/s',cx,cy+R*0.30);}
-function aoaTape(cx,cy,R){const x=12,top=cy-R*0.7,h=R*1.4;
-  ctx.fillStyle='rgba(10,18,36,0.85)';ctx.fillRect(x-2,top,15,h);
-  const aMax=20*Math.PI/180,critY=top+(1-AC.aCrit/aMax)*h;
-  ctx.fillStyle='rgba(255,59,59,0.5)';ctx.fillRect(x-2,top,15,Math.max(0,critY-top));
-  ctx.fillStyle='rgba(122,240,192,0.35)';ctx.fillRect(x-2,Math.max(top,critY),15,top+h-Math.max(top,critY));
-  const py=top+(1-clamp(S.alpha,-0.05,aMax)/aMax)*h;
-  ctx.fillStyle='#ffd23b';ctx.beginPath();ctx.moveTo(x+15,py);ctx.lineTo(x+25,py-6);ctx.lineTo(x+25,py+6);ctx.fill();
-  ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='left';ctx.fillText('AoA',x-2,top-5);}
-function gMeter(cx,cy,R){ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='center';
-  ctx.fillStyle=Math.abs(S.gLoad)>4?'#ff3b3b':'#9fb6da';ctx.font='12px Share Tech Mono';
-  ctx.fillText('g '+S.gLoad.toFixed(1),cx,cy);}
-function slip(cx,cy,R,roll){const wd=R*0.7;ctx.strokeStyle='#1c3354';ctx.lineWidth=2;ctx.strokeRect(cx-wd/2,cy-11,wd,22);
-  ctx.beginPath();ctx.moveTo(cx-10,cy-11);ctx.lineTo(cx-10,cy+11);ctx.moveTo(cx+10,cy-11);ctx.lineTo(cx+10,cy+11);ctx.stroke();
-  const bx=clamp(cx+S.beta*420,cx-wd/2+9,cx+wd/2-9);
+// Compass card
+function compassGauge(cx,cy,R,yaw){
+  bezel(cx,cy,R,'COMPASS');
+  let hd=(yaw*180/Math.PI)%360;if(hd<0)hd+=360;
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(-yaw);
+  ctx.fillStyle='#cfd6de';ctx.textAlign='center';
+  const cards=['N','3','6','E','12','15','S','21','24','W','30','33'];
+  for(let i=0;i<12;i++){const a=i/12*Math.PI*2;
+    ctx.save();ctx.rotate(a);ctx.font=(R*(i%3===0?0.18:0.12))+'px Share Tech Mono';
+    ctx.fillStyle=(i%3===0)?'#fff':'#9aa5b1';ctx.fillText(cards[i],0,-R*0.74);
+    ctx.strokeStyle='#cfd6de';ctx.lineWidth=i%3===0?3:1.5;ctx.beginPath();ctx.moveTo(0,-R*0.9);ctx.lineTo(0,-R*0.98);ctx.stroke();
+    ctx.restore();}
+  ctx.restore();
+  // fixed lubber line
+  ctx.fillStyle='#ffcf3b';ctx.beginPath();ctx.moveTo(cx,cy-R*0.9);ctx.lineTo(cx-6,cy-R*0.78);ctx.lineTo(cx+6,cy-R*0.78);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font=(R*0.20)+'px Share Tech Mono';ctx.textAlign='center';ctx.fillText(String(Math.round(hd)).padStart(3,'0'),cx,cy+R*0.15);
+}
+// combined g-meter + AoA gauge
+function gAoaGauge(cx,cy,R){
+  bezel(cx,cy,R,'g  /  AoA');
+  // g as needle on left half scale -4..+8
+  const g=Math.max(-4,Math.min(8,S.gLoad));
+  ctx.fillStyle=Math.abs(S.gLoad)>4.5?'#ff5b5b':'#fff';ctx.font='700 '+(R*0.34)+'px Share Tech Mono';ctx.textAlign='center';
+  ctx.fillText(g.toFixed(1)+'g',cx,cy-R*0.05);
+  // AoA bar across bottom of gauge
+  const aMax=20,aDeg=S.alpha*180/Math.PI;
+  const bw=R*1.3,bx=cx-bw/2,by=cy+R*0.35;
+  ctx.fillStyle='#222';ctx.fillRect(bx,by,bw,R*0.16);
+  const critF=AC.aCrit*180/Math.PI/aMax;
+  ctx.fillStyle='rgba(210,59,59,0.6)';ctx.fillRect(bx+bw*critF,by,bw*(1-critF),R*0.16);
+  const f=Math.max(0,Math.min(1,aDeg/aMax));
+  ctx.fillStyle='#ffcf3b';ctx.fillRect(bx+bw*f-2,by-2,4,R*0.16+4);
+  ctx.fillStyle='#7d8896';ctx.font=(R*0.11)+'px Share Tech Mono';ctx.fillText('AoA '+aDeg.toFixed(0)+'\u00B0',cx,by+R*0.34);
+}
+// slip ball strip
+function slipStrip(cx,cy,R){
+  const wd=R*1.0;ctx.fillStyle='#0a0c0f';ctx.fillRect(cx-wd/2-6,cy-12,wd+12,24);
+  ctx.strokeStyle='#3a3f46';ctx.lineWidth=2;ctx.strokeRect(cx-wd/2,cy-10,wd,20);
+  ctx.beginPath();ctx.moveTo(cx-9,cy-10);ctx.lineTo(cx-9,cy+10);ctx.moveTo(cx+9,cy-10);ctx.lineTo(cx+9,cy+10);ctx.stroke();
+  const bx=Math.max(cx-wd/2+8,Math.min(cx+wd/2-8,cx+S.beta*380));
   ctx.fillStyle=Math.abs(S.beta)<0.04?'#7af0c0':'#ffd23b';ctx.beginPath();ctx.arc(bx,cy,8,0,7);ctx.fill();
-  ctx.fillStyle='#6f8fc0';ctx.font='9px Share Tech Mono';ctx.textAlign='center';ctx.fillText('SLIP',cx,cy+24);}
-function hdg(cx,cy,yaw){let d=(yaw*180/Math.PI)%360;if(d<0)d+=360;
-  ctx.fillStyle='#9fb6da';ctx.font='13px Share Tech Mono';ctx.textAlign='center';ctx.fillText('HDG '+String(Math.round(d)).padStart(3,'0'),cx,cy+4);}
-function miniMap(yaw){const mw=Math.min(150,W*0.26),mx=W-mw-12,my=H-mw-150,sc=mw/8000;
-  ctx.save();ctx.fillStyle='rgba(8,14,28,0.9)';ctx.strokeStyle='#1c3354';ctx.lineWidth=2;
+}
+function miniMap(yaw){const mw=Math.min(140,W*0.24),mx=W-mw-12,my=H-mw-150,sc=mw/8000;
+  ctx.save();ctx.fillStyle='rgba(8,14,28,0.92)';ctx.strokeStyle='#3a3f46';ctx.lineWidth=2;
   ctx.fillRect(mx,my,mw,mw);ctx.strokeRect(mx,my,mw,mw);
   const ccx=mx+mw/2,ccy=my+mw/2;
   const dirN=Math.cos(ENV.ridgeHeading),dirE=Math.sin(ENV.ridgeHeading);
   ctx.save();ctx.beginPath();ctx.rect(mx,my,mw,mw);ctx.clip();
-  function toMap(N,E){return [ccx + (E-S.posE)*sc, ccy - (N-S.posN)*sc];}
-  // ridge
-  ctx.strokeStyle='rgba(160,110,60,0.8)';ctx.lineWidth=6;ctx.beginPath();
-  let a=toMap(S.posN+dirN*6000, S.posE+dirE*6000), b=toMap(S.posN-dirN*6000,S.posE-dirE*6000);
+  function toMap(N,E){return [ccx+(E-S.posE)*sc, ccy-(N-S.posN)*sc];}
+  ctx.strokeStyle='rgba(160,110,60,0.85)';ctx.lineWidth=6;ctx.beginPath();
+  let a=toMap(S.posN+dirN*6000,S.posE+dirE*6000),b=toMap(S.posN-dirN*6000,S.posE-dirE*6000);
   ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
-  // thermals
   for(const t of ENV.thermals){const p=toMap(t.x,t.y);ctx.strokeStyle='rgba(122,240,192,0.7)';ctx.lineWidth=2;
     ctx.beginPath();ctx.arc(p[0],p[1],t.r*sc,0,7);ctx.stroke();}
-  // glider (centre) with heading
   ctx.translate(ccx,ccy);ctx.rotate(yaw);
   ctx.fillStyle='#39d0ff';ctx.beginPath();ctx.moveTo(0,-7);ctx.lineTo(5,6);ctx.lineTo(-5,6);ctx.fill();
   ctx.restore();
-  // wind arrow
   ctx.save();ctx.translate(mx+16,my+16);ctx.rotate(ENV.windDir+Math.PI);
   ctx.strokeStyle='#9fb6da';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(0,8);ctx.moveTo(0,8);ctx.lineTo(-3,4);ctx.moveTo(0,8);ctx.lineTo(3,4);ctx.stroke();
   ctx.restore();
-  ctx.fillStyle='#6f8fc0';ctx.font='8px Share Tech Mono';ctx.textAlign='left';ctx.fillText('DUNSTABLE',mx+4,my+mw-6);
+  ctx.fillStyle='#7d8896';ctx.font='8px Share Tech Mono';ctx.textAlign='left';ctx.fillText('DUNSTABLE',mx+4,my+mw-6);
   ctx.restore();}
-function crashed(){ctx.fillStyle='rgba(120,10,10,0.5)';ctx.fillRect(0,0,W,H);
+function crashed(){ctx.fillStyle='rgba(120,10,10,0.55)';ctx.fillRect(0,0,W,H);
   ctx.fillStyle='#fff';ctx.font='700 28px Chakra Petch';ctx.textAlign='center';ctx.fillText('GROUND CONTACT',W/2,H*0.5);
   ctx.font='14px Chakra Petch';ctx.fillText('tap RESET',W/2,H*0.5+30);}
 
@@ -427,8 +531,8 @@ function bindPad(padId,knobId,onMove,xOnly){
   const pad=document.getElementById(padId),knob=document.getElementById(knobId);let active=null;
   const rect=()=>pad.getBoundingClientRect();
   function set(cx,cy){const r=rect();let nx=clamp((cx-r.left)/r.width*2-1,-1,1),ny=clamp((cy-r.top)/r.height*2-1,-1,1);
-    if(xOnly)ny=0;knob.style.left=(r.width/2+nx*(r.width/2-24)-22)+'px';knob.style.top=(r.height/2+ny*(r.height/2-24)-22)+'px';onMove(nx,ny);}
-  function center(){const r=rect();knob.style.left=(r.width/2-22)+'px';knob.style.top=(r.height/2-22)+'px';onMove(0,0);}
+    if(xOnly)ny=0;knob.style.left=(r.width/2+nx*(r.width/2-30)-29)+'px';knob.style.top=(r.height/2+ny*(r.height/2-30)-29)+'px';onMove(nx,ny);}
+  function center(){const r=rect();knob.style.left=(r.width/2-29)+'px';knob.style.top=(r.height/2-29)+'px';onMove(0,0);}
   pad.addEventListener('touchstart',e=>{active=e.changedTouches[0].identifier;const t=e.changedTouches[0];set(t.clientX,t.clientY);e.preventDefault();},{passive:false});
   pad.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===active)set(t.clientX,t.clientY);e.preventDefault();},{passive:false});
   function end(e){for(const t of e.changedTouches)if(t.identifier===active){active=null;center();}e.preventDefault();}
@@ -448,7 +552,7 @@ function frame(t){
   if(running){
     let dt=(t-tPrev)/1000; if(!dt||dt>0.05)dt=0.016; tPrev=t;
     // substep for stability
-    const N=4,h=dt/N; for(let i=0;i<N;i++) physics(h);
+    const N=16,h=dt/N; for(let i=0;i<N;i++) physics(h);
     audioUpdate(dt); draw();
   }
   requestAnimationFrame(frame);
