@@ -485,21 +485,20 @@ function drawWorld(vx,vy,vw,vh){
   ctx.restore();
 
   // ---- red wool yaw string taped to the canopy ----
-  // anchored near top-centre of the canopy; free end streams from where the air comes.
-  // beta>0 = slipping right (airflow from the right) -> free end swings to the RIGHT;
-  // you "step on the string" with right rudder to centre it. (opposite sense to the ball)
+  // In flight the airflow blows the string back UP the canopy toward the pilot.
+  // Tab is at the BOTTOM (anchor); the free end streams upward.
+  // beta>0 = airflow from the LEFT -> free end swings to the RIGHT (opposite side). (you "step on the string")
   ctx.save();
-  const ax=vx+vw*0.5, ay=vy+vh*0.16;        // tape anchor point on canopy
-  const len=vh*0.16;                         // string length
-  const defl=Math.max(-1,Math.min(1,S.beta*6)); // visual deflection, clamped
-  const ex=ax + defl*len*0.9;                // free end x (streams toward airflow side)
-  const ey=ay + len*Math.sqrt(Math.max(0.05,1-defl*defl)); // hangs/streams aft (down-screen)
-  // slight curve for a wool look
+  const ax=vx+vw*0.5, ay=vy+vh*0.42;          // tape anchor (bottom of the string)
+  const len=vh*0.18;                           // string length
+  const defl=Math.max(-1,Math.min(1,-S.beta*6)); // free end swings OPPOSITE to airflow side
+  const ex=ax + defl*len*0.9;                  // free end x
+  const ey=ay - len*Math.sqrt(Math.max(0.05,1-defl*defl)); // streams UP-screen (toward pilot)
   ctx.strokeStyle='#e23b3b'; ctx.lineWidth=4; ctx.lineCap='round';
   ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=3;
   ctx.beginPath(); ctx.moveTo(ax,ay);
-  ctx.quadraticCurveTo(ax+defl*len*0.5, ay+len*0.55, ex,ey); ctx.stroke();
-  // tape tab
+  ctx.quadraticCurveTo(ax+defl*len*0.5, ay-len*0.55, ex,ey); ctx.stroke();
+  // tape tab at the anchor (bottom)
   ctx.shadowBlur=0; ctx.fillStyle='rgba(230,230,235,0.85)';
   ctx.fillRect(ax-7,ay-4,14,8);
   ctx.restore();
@@ -629,7 +628,7 @@ function slipStrip(cx,cy,R){
   const wd=R*1.0;ctx.fillStyle='#0a0c0f';ctx.fillRect(cx-wd/2-6,cy-12,wd+12,24);
   ctx.strokeStyle='#3a3f46';ctx.lineWidth=2;ctx.strokeRect(cx-wd/2,cy-10,wd,20);
   ctx.beginPath();ctx.moveTo(cx-9,cy-10);ctx.lineTo(cx-9,cy+10);ctx.moveTo(cx+9,cy-10);ctx.lineTo(cx+9,cy+10);ctx.stroke();
-  const bx=Math.max(cx-wd/2+8,Math.min(cx+wd/2-8,cx-S.beta*380)); // ball deflects opposite the string
+  const bx=Math.max(cx-wd/2+8,Math.min(cx+wd/2-8,cx+S.beta*380)); // ball opposite the string
   ctx.fillStyle=Math.abs(S.beta)<0.04?'#7af0c0':'#ffd23b';ctx.beginPath();ctx.arc(bx,cy,8,0,7);ctx.fill();
 }
 function miniMap(yaw){const mw=Math.min(140,W*0.24),mx=W-mw-12,my=H-mw-150,sc=mw/8000;
