@@ -240,10 +240,14 @@ function setup(s){
   // small nose-up trim so it holds the glide hands-off-ish
   ctrl={de:0,da:0,dr:0};
   ENV.windDir=315*Math.PI/180; ENV.windSpd=7;
-  if(s==='ridge'){ ENV.windSpd=8; S.posE=-200; S.posD=-260; spawnThermals(2);}
-  if(s==='thermal'){ ENV.windSpd=3; S.posD=-500; spawnThermals(7);}
-  if(s==='stall'){ S.posD=-900; spawnThermals(0); }
-  if(s==='spin'){ S.posD=-1100; spawnThermals(0); }
+  if(s==='ridge'){ ENV.windSpd=8; S.posE=-200; spawnThermals(2);}
+  if(s==='thermal'){ ENV.windSpd=3; spawnThermals(7);}
+  if(s==='stall'){ spawnThermals(0); }
+  if(s==='spin'){ spawnThermals(0); }
+  // ALWAYS spawn well above the actual ground beneath us (real terrain can be high)
+  const groundHere=terrainAlt(S.posN,S.posE);
+  const wantUp = {ridge:260, thermal:500, stall:900, spin:1100}[s] || 500;
+  S.posD = -(groundHere + wantUp);   // posD is down; altitude above ground = wantUp
   document.getElementById('lab').textContent={ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[s];
 }
 
