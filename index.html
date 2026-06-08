@@ -177,10 +177,43 @@ function ridgeLift(posN,posE,altUp){
 }
 function thermalLift(posN,posE){let s=0;for(const t of ENV.thermals){
   const d=Math.hypot(posN-t.x,posE-t.y); if(d<t.r) s+=Math.cos(d/t.r*Math.PI/2)*t.w;} return s;}
-function terrainAlt(posN,posE){ // simple escarpment: ground rises on SE side of ridge line
+
+/* ---- real Dunstable terrain via Open-Meteo Elevation API (CORS, no key) ---- */
+const SITE={lat:51.8725, lon:-0.5460};   // London Gliding Club, Dunstable Downs
+const GRID={n:21, span:6000};             // 21x21 samples over 6km, ~300m spacing
+let HEIGHT=null, hMin=0, hMax=200;        // heightmap [n*n] in metres AMSL, origin = site
+// convert local N/E metres -> lat/lon
+function neToLatLon(N,E){ const dLat=N/111320, dLon=E/(111320*Math.cos(SITE.lat*Math.PI/180));
+  return [SITE.lat+dLat, SITE.lon+dLon]; }
+async function loadTerrain(){
+  try{
+    const lats=[],lons=[]; const half=GRID.span/2, step=GRID.span/(GRID.n-1);
+    for(let j=0;j<GRID.n;j++)for(let i=0;i<GRID.n;i++){
+      const N=half-j*step, E=-half+i*step; const ll=neToLatLon(N,E); lats.push(ll[0].toFixed(4)); lons.push(ll[1].toFixed(4));
+    }
+    const url='https://api.open-meteo.com/v1/elevation?latitude='+lats.join(',')+'&longitude='+lons.join(',');
+    const r=await fetch(url); const d=await r.json();
+    if(d&&d.elevation&&d.elevation.length===GRID.n*GRID.n){
+      HEIGHT=d.elevation; hMin=Math.min(...HEIGHT); hMax=Math.max(...HEIGHT);
+      ENV.ridgeTop=Math.max(60,hMax-hMin);
+    }
+  }catch(e){ HEIGHT=null; } // fall back to idealised ridge
+}
+function sampleHeight(N,E){ // bilinear sample of real heightmap; returns AMSL metres or null
+  if(!HEIGHT) return null;
+  const half=GRID.span/2, step=GRID.span/(GRID.n-1);
+  const fx=(E+half)/step, fy=(half-N)/step;
+  if(fx<0||fy<0||fx>GRID.n-1||fy>GRID.n-1) return hMin; // outside grid: floor
+  const x0=Math.floor(fx),y0=Math.floor(fy),x1=Math.min(GRID.n-1,x0+1),y1=Math.min(GRID.n-1,y0+1);
+  const tx=fx-x0,ty=fy-y0;
+  const h00=HEIGHT[y0*GRID.n+x0],h10=HEIGHT[y0*GRID.n+x1],h01=HEIGHT[y1*GRID.n+x0],h11=HEIGHT[y1*GRID.n+x1];
+  return (h00*(1-tx)+h10*tx)*(1-ty)+(h01*(1-tx)+h11*tx)*ty;
+}
+function terrainAlt(posN,posE){ // metres ABOVE valley floor of ground under a point
+  const real=sampleHeight(posN,posE);
+  if(real!==null) return real-hMin;   // relative to lowest point in grid
   const dirN=Math.cos(ENV.ridgeHeading), dirE=Math.sin(ENV.ridgeHeading);
-  const perp = -(posN*(-dirE)+posE*dirN); // NW positive, SE negative
-  // SE plateau high, NW vale low, smooth step at ridge
+  const perp = -(posN*(-dirE)+posE*dirN);
   return ENV.ridgeTop*(0.5-0.5*Math.tanh(perp/120));
 }
 
@@ -343,36 +376,129 @@ function warnings(){
 /* ---------------- render: realistic round-gauge K21 panel ---------------- */
 function draw(){
   ctx.clearRect(0,0,W,H);
-  // panel backdrop (grey GRP like the real cockpit)
-  const grad=ctx.createLinearGradient(0,0,0,H);
-  grad.addColorStop(0,'#2a2e33'); grad.addColorStop(1,'#16191d');
-  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
   const eul=quatToEuler(S.q); const roll=eul[0],pitch=eul[1],yaw=eul[2];
 
-  // layout: scale instrument size to screen, arrange like ASK-21 panel
-  const port = W<H; // portrait?
-  const gR = Math.min(W,H)* (port?0.14:0.12);   // gauge radius
-  // panel occupies upper ~55% of screen, controls below
-  const topY = gR+40;
-  const midY = topY + gR*2.2;
-  // top row: ASI | Attitude | Altimeter
-  const cxA = W*0.5;                 // attitude centre (slightly larger)
-  const aR = gR*1.25;
-  asiGauge(W*0.18, topY, gR);
-  altGauge(W*0.82, topY, gR);
-  attitudeGauge(cxA, topY+gR*0.2, aR, roll, pitch);
-  // bottom row: vario | compass | g+AoA
-  varioGauge(W*0.18, midY, gR);
-  compassGauge(W*0.5, midY, gR, yaw);
-  gAoaGauge(W*0.82, midY, gR);
-  // slip ball under attitude
-  slipStrip(cxA, topY+gR*0.2+aR+18, aR);
-  // mini map + label
+  // ---- out-the-window 3D view (top portion) ----
+  const horizonH = H*0.62;            // world fills upper 62%, panel below
+  drawWorld(0,0,W,horizonH);
+
+  // ---- cockpit coaming (dark dashboard the gauges sit in) ----
+  const coam=ctx.createLinearGradient(0,horizonH-20,0,H);
+  coam.addColorStop(0,'#23262b'); coam.addColorStop(0.12,'#16191d'); coam.addColorStop(1,'#0d0f12');
+  ctx.fillStyle=coam; ctx.fillRect(0,horizonH-18,W,H-horizonH+18);
+  // curved coaming top edge
+  ctx.strokeStyle='#3a3f46'; ctx.lineWidth=3; ctx.beginPath();
+  ctx.moveTo(0,horizonH-6); ctx.quadraticCurveTo(W*0.5,horizonH-26,W,horizonH-6); ctx.stroke();
+
+  // ---- compact instrument strip along the coaming ----
+  const gR=Math.min(W*0.11, (H-horizonH)*0.34);
+  const rowY=horizonH + (H-horizonH)*0.46;
+  const aR=gR*1.18;
+  asiGauge(W*0.12, rowY, gR);
+  attitudeGauge(W*0.31, rowY, aR, roll, pitch);
+  varioGauge(W*0.50, rowY, gR);
+  altGauge(W*0.69, rowY, gR);
+  compassGauge(W*0.88, rowY, gR, yaw);
+  slipStrip(W*0.31, rowY+aR+12, aR);
+  gAoaGauge(W*0.50, rowY+gR+gR*0.55, gR*0.7);
+
   miniMap(yaw);
-  ctx.fillStyle='#cfe3ff';ctx.font='12px Chakra Petch';ctx.textAlign='left';
+  ctx.fillStyle='#eaf4ff';ctx.font='12px Chakra Petch';ctx.textAlign='left';
   ctx.fillText(({ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[scenario])||'',14,22);
+  if(HEIGHT){ctx.fillStyle='#7d8896';ctx.font='10px Share Tech Mono';ctx.fillText('real terrain · Dunstable',14,38);}
   if(!S.alive) crashed();
   warnings();
+}
+
+/* ---- 3D out-the-window synthetic terrain view ---- */
+function drawWorld(vx,vy,vw,vh){
+  ctx.save();
+  ctx.beginPath();ctx.rect(vx,vy,vw,vh);ctx.clip();
+  // camera: eye at glider, looking along body +x, up = body -z
+  const eul=quatToEuler(S.q); const pitch=eul[1], roll=eul[0];
+  const eyeN=S.posN, eyeE=S.posE, eyeUp=-S.posD;
+  const fwd=b2w(S.q,[1,0,0]);   // world NED
+  const rgt=b2w(S.q,[0,1,0]);
+  const upv=b2w(S.q,[0,0,-1]);
+  // convert NED to a camera basis in (East=x, North=y, Up=z) world for projection
+  function toCam(N,E,U){
+    const dx=E-eyeE, dy=N-eyeN, dz=U-eyeUp;            // world delta (E,N,Up)
+    // body axes in (E,N,Up): fwd/rgt/up given in NED -> convert each (N,E,D)->(E,N,Up)
+    const F=[fwd[1],fwd[0],-fwd[2]], R=[rgt[1],rgt[0],-rgt[2]], Uc=[upv[1],upv[0],-upv[2]];
+    const xf=dx*R[0]+dy*R[1]+dz*R[2];   // right
+    const yf=dx*Uc[0]+dy*Uc[1]+dz*Uc[2];// up
+    const zf=dx*F[0]+dy*F[1]+dz*F[2];   // forward (depth)
+    return [xf,yf,zf];
+  }
+  const fov=vh/Math.tan(50*Math.PI/180/2)/2; // focal length px
+  const cx=vx+vw/2, cy=vy+vh/2;
+  function project(c){ if(c[2]<=2) return null; return [cx+fov*c[0]/c[2], cy-fov*c[1]/c[2]]; }
+
+  // sky gradient (drawn first, full viewport)
+  const sky=ctx.createLinearGradient(0,vy,0,vy+vh);
+  sky.addColorStop(0,'#1a4e8a'); sky.addColorStop(0.7,'#7fb0d8'); sky.addColorStop(1,'#cfe0ee');
+  ctx.fillStyle=sky; ctx.fillRect(vx,vy,vw,vh);
+
+  // terrain grid quads, painter's algorithm (far to near)
+  const reach=5000, stepM=250;          // draw 5km out at 250m grid
+  const rows=[];
+  const fN=fwd[0], fE=fwd[1];           // forward heading in N,E
+  // build grid aligned to world N/E around the glider, only ahead-ish
+  const cells=[];
+  for(let dz=reach; dz>=stepM; dz-=stepM){
+    for(let dxi=-reach; dxi<=reach; dxi+=stepM){
+      // sample point ahead along forward and lateral (approx world-aligned)
+      const N=eyeN+fN*dz - fE*dxi;
+      const E=eyeE+fE*dz + fN*dxi;
+      const g=terrainAlt(N,E);
+      cells.push({N,E,U:g,dz,dxi});
+    }
+  }
+  // draw as quads using neighbours
+  const cols=Math.round((2*reach)/stepM)+1;
+  const rowsN=Math.round((reach-stepM)/stepM)+1;
+  function cell(ri,ci){const idx=ri*cols+ci;return cells[idx];}
+  for(let ri=0;ri<rowsN-1;ri++){
+    for(let ci=0;ci<cols-1;ci++){
+      const a=cell(ri,ci),b=cell(ri,ci+1),c=cell(ri+1,ci+1),d=cell(ri+1,ci);
+      if(!a||!b||!c||!d) continue;
+      const pa=project(toCam(a.N,a.E,a.U)),pb=project(toCam(b.N,b.E,b.U)),pc=project(toCam(c.N,c.E,c.U)),pd=project(toCam(d.N,d.E,d.U));
+      if(!pa||!pb||!pc||!pd) continue;
+      // shade by height + distance fog
+      const hMean=(a.U+b.U+c.U+d.U)/4;
+      const t=Math.max(0,Math.min(1,(hMean)/(Math.max(80,ENV.ridgeTop))));
+      let r=70+t*70, gg=110+t*55, bl=70+ -t*20+40;
+      const fog=Math.min(0.85, a.dz/reach);
+      r=r*(1-fog)+150*fog; gg=gg*(1-fog)+180*fog; bl=bl*(1-fog)+205*fog;
+      ctx.fillStyle='rgb('+(r|0)+','+(gg|0)+','+(bl|0)+')';
+      ctx.beginPath();ctx.moveTo(pa[0],pa[1]);ctx.lineTo(pb[0],pb[1]);ctx.lineTo(pc[0],pc[1]);ctx.lineTo(pd[0],pd[1]);ctx.closePath();ctx.fill();
+    }
+  }
+  // airfield marker (London GC at origin)
+  const fld=project(toCam(0,0,terrainAlt(0,0)));
+  if(fld){ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='11px Share Tech Mono';ctx.textAlign='center';
+    ctx.beginPath();ctx.arc(fld[0],fld[1],4,0,7);ctx.fill();ctx.fillText('LGC',fld[0],fld[1]-8);}
+  ctx.restore();
+
+  // ---- red wool yaw string taped to the canopy ----
+  // anchored near top-centre of the canopy; free end streams from where the air comes.
+  // beta>0 = slipping right (airflow from the right) -> free end swings to the RIGHT;
+  // you "step on the string" with right rudder to centre it. (opposite sense to the ball)
+  ctx.save();
+  const ax=vx+vw*0.5, ay=vy+vh*0.16;        // tape anchor point on canopy
+  const len=vh*0.16;                         // string length
+  const defl=Math.max(-1,Math.min(1,S.beta*6)); // visual deflection, clamped
+  const ex=ax + defl*len*0.9;                // free end x (streams toward airflow side)
+  const ey=ay + len*Math.sqrt(Math.max(0.05,1-defl*defl)); // hangs/streams aft (down-screen)
+  // slight curve for a wool look
+  ctx.strokeStyle='#e23b3b'; ctx.lineWidth=4; ctx.lineCap='round';
+  ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=3;
+  ctx.beginPath(); ctx.moveTo(ax,ay);
+  ctx.quadraticCurveTo(ax+defl*len*0.5, ay+len*0.55, ex,ey); ctx.stroke();
+  // tape tab
+  ctx.shadowBlur=0; ctx.fillStyle='rgba(230,230,235,0.85)';
+  ctx.fillRect(ax-7,ay-4,14,8);
+  ctx.restore();
 }
 // shared bezel
 function bezel(cx,cy,R,label){
@@ -499,7 +625,7 @@ function slipStrip(cx,cy,R){
   const wd=R*1.0;ctx.fillStyle='#0a0c0f';ctx.fillRect(cx-wd/2-6,cy-12,wd+12,24);
   ctx.strokeStyle='#3a3f46';ctx.lineWidth=2;ctx.strokeRect(cx-wd/2,cy-10,wd,20);
   ctx.beginPath();ctx.moveTo(cx-9,cy-10);ctx.lineTo(cx-9,cy+10);ctx.moveTo(cx+9,cy-10);ctx.lineTo(cx+9,cy+10);ctx.stroke();
-  const bx=Math.max(cx-wd/2+8,Math.min(cx+wd/2-8,cx+S.beta*380));
+  const bx=Math.max(cx-wd/2+8,Math.min(cx+wd/2-8,cx-S.beta*380)); // ball deflects opposite the string
   ctx.fillStyle=Math.abs(S.beta)<0.04?'#7af0c0':'#ffd23b';ctx.beginPath();ctx.arc(bx,cy,8,0,7);ctx.fill();
 }
 function miniMap(yaw){const mw=Math.min(140,W*0.24),mx=W-mw-12,my=H-mw-150,sc=mw/8000;
@@ -561,7 +687,15 @@ requestAnimationFrame(frame);
 
 /* ---------------- menu ---------------- */
 document.querySelectorAll('.scn button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.scn button').forEach(x=>x.style.opacity=0.5);b.style.opacity=1;setup(b.dataset.scn);});
-document.getElementById('startBtn').onclick=()=>{initAudio();setup(scenario);document.getElementById('brake').value=0;document.getElementById('menu').classList.add('hidden');running=true;tPrev=performance.now();};
+document.getElementById('startBtn').onclick=async()=>{
+  initAudio();
+  const btn=document.getElementById('startBtn');
+  if(!HEIGHT){ btn.textContent='LOADING TERRAIN…'; await loadTerrain(); btn.textContent='START FLYING'; }
+  setup(scenario);
+  document.getElementById('brake').value=0;
+  document.getElementById('menu').classList.add('hidden');
+  running=true;tPrev=performance.now();
+};
 document.getElementById('resetBtn').onclick=()=>{running=false;document.getElementById('menu').classList.remove('hidden');};
 
 resize();setup('ridge');
