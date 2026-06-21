@@ -15,7 +15,25 @@
   .pad{position:fixed;bottom:16px;border-radius:18px;background:rgba(14,24,44,0.72);
     border:2px solid #1c3354;touch-action:none;z-index:5;}
   #stickPad{left:14px;width:200px;height:200px;}
-  #rudderPad{right:14px;width:250px;height:96px;border-radius:48px;bottom:46px;}
+  #tiltBox{position:fixed;left:14px;bottom:16px;width:150px;height:150px;border-radius:18px;
+    background:rgba(14,24,44,0.72);border:2px solid #1c3354;z-index:5;}
+  #tiltBox .lbl{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:10px;letter-spacing:1px;color:#6f8fc0;}
+  #tiltDot{position:absolute;width:30px;height:30px;border-radius:50%;left:60px;top:60px;
+    background:radial-gradient(circle at 40% 35%,#39d0ff,#0b6f9c);box-shadow:0 0 14px rgba(57,208,255,0.7);pointer-events:none;}
+  #calibBtn{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);padding:7px 12px;font-size:11px;
+    background:linear-gradient(135deg,#39d0ff,#7af0c0);color:#04101e;border:none;border-radius:999px;}
+  #trimWrap{position:fixed;left:178px;bottom:16px;z-index:5;text-align:center;}
+  #trimWrap .lbl{font-size:9px;letter-spacing:1px;color:#6f8fc0;margin-bottom:4px;}
+  #trim{writing-mode:vertical-lr;direction:rtl;width:26px;height:120px;accent-color:#39d0ff;}
+  #rudderPedals{position:fixed;right:14px;bottom:16px;z-index:5;display:flex;align-items:flex-end;gap:8px;}
+  .pedal{position:relative;width:62px;height:150px;border-radius:14px;background:rgba(14,24,44,0.72);
+    border:2px solid #1c3354;overflow:hidden;touch-action:none;}
+  .pedal .ptop{position:absolute;left:0;right:0;bottom:0;height:40%;
+    background:linear-gradient(180deg,#ff7adf,#9c2b78);transition:height .05s linear;}
+  .pedal .plbl{position:absolute;top:6px;left:0;right:0;text-align:center;font-size:14px;font-weight:700;color:#cfe3ff;}
+  .pedalmid{display:flex;flex-direction:column;align-items:center;gap:6px;padding-bottom:6px;}
+  .pedalmid .rlbl{font-size:9px;letter-spacing:1px;color:#6f8fc0;}
+  #rudCenter{padding:7px 10px;font-size:10px;background:rgba(20,28,52,0.9);color:#9fb6da;border:2px solid #2a4870;border-radius:999px;}
   .pad .lbl{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:10px;letter-spacing:2px;color:#6f8fc0;}
   #stickKnob,#rudderKnob{position:absolute;width:58px;height:58px;border-radius:50%;pointer-events:none;}
   #stickKnob{background:radial-gradient(circle at 40% 35%,#39d0ff,#0b6f9c);box-shadow:0 0 16px rgba(57,208,255,0.7);}
@@ -54,8 +72,20 @@
 <button id="resetBtn">RESET</button>
 <div id="warn"><span id="stallW">STALL</span><span id="spinW">SPIN — OPP RUDDER, STICK FWD</span></div>
 
-<div class="pad" id="stickPad"><span class="lbl">STICK · PITCH/ROLL</span><div id="stickKnob"></div></div>
-<div class="pad" id="rudderPad"><span class="lbl">RUDDER</span><div id="rudderKnob"></div></div>
+<!-- TILT STICK: the iPad's attitude IS the stick. This box shows the stick position + calibrate. -->
+<div id="tiltBox">
+  <div class="lbl">STICK = TILT iPAD</div>
+  <div id="tiltDot"></div>
+  <button id="calibBtn">SET NEUTRAL</button>
+</div>
+<!-- pitch trim: sets the neutral pitch reference (roll is never trimmed) -->
+<div id="trimWrap"><div class="lbl">PITCH TRIM</div><input type="range" id="trim" min="-100" max="100" value="0"></div>
+<!-- rudder stays on buttons (the 'feet') -->
+<div id="rudderPedals">
+  <div class="pedal" id="pedalL"><div class="ptop"></div><span class="plbl">L</span></div>
+  <div class="pedalmid"><span class="rlbl">RUDDER</span><button id="rudCenter">CENTRE</button></div>
+  <div class="pedal" id="pedalR"><div class="ptop"></div><span class="plbl">R</span></div>
+</div>
 <div id="brakeWrap"><div class="lbl">AIRBRAKE</div><input type="range" id="brake" min="0" max="100" value="0"></div>
 
 <div id="menu">
@@ -64,7 +94,7 @@
   <div class="panel">
     <b>Physics:</b> genuine six-degree-of-freedom rigid body. Forces &amp; moments from a lift curve and drag polar fitted to published ASK-21 data (35 kn stall, 34:1 at 49 kn, 0.64 m/s min sink). Spins emerge from asymmetric wing stall, not scripting.<br><br>
     <b>Map:</b> Dunstable Downs — the Chiltern escarpment runs NE–SW and faces NW. With a NW wind you get ridge lift along the slope; thermals drift downwind. London GC sits at the foot.<br><br>
-    <b>Controls:</b> left pad = stick (pull down = nose up, left/right = roll). Right pad = rudder. Side slider = airbrakes. Keep the slip ball centred.<br><br>
+    <b>Controls:</b> the iPad <b>IS the stick</b> — tilt it left/right to roll, tilt fore/aft for pitch. Tap SET NEUTRAL to zero the stick to however you're holding it. Right pad = rudder ("feet"). PITCH TRIM slider sets the hands-level pitch reference (roll is never trimmed). Side slider = airbrakes. Keep the yaw string centred.<br><br>
     <b>Honest seams:</b> mass/area/polar/stall are from real data; the stability derivatives &amp; inertias are textbook estimates tuned to the POH's docile handling. No g-feel or buffet. Mental rehearsal only — your London GC instructors are the authority.
   </div>
   <div class="tag">SCENARIO</div>
@@ -672,8 +702,93 @@ function bindPad(padId,knobId,onMove,xOnly){
   center();
 }
 // stick: drag down (ny>0) = pull = nose up (de>0). roll: nx>0 = roll right (da>0)
-bindPad('stickPad','stickKnob',(nx,ny)=>{ctrl.da=nx; ctrl.de=ny;});
-bindPad('rudderPad','rudderKnob',(nx)=>{ctrl.dr=nx;},true);
+/* ---- TILT STICK: device orientation drives roll (beta/gamma) & pitch ---- */
+let tiltZero={beta:0,gamma:0}, tiltOn=false, pitchTrim=0;
+// beta = front-back tilt (deg), gamma = left-right tilt (deg) in portrait;
+// we read both and map: left-right tilt -> roll, front-back tilt -> pitch.
+let lastTilt={b:0,g:0};
+function onOrient(e){
+  if(e.beta===null) return;
+  tiltOn=true;
+  lastTilt.b=e.beta; lastTilt.g=e.gamma;
+  // deflection from the calibrated neutral, scaled. ~25deg tilt = full deflection.
+  const dRoll = (e.gamma - tiltZero.gamma)/25;     // left-right tilt -> roll
+  let dPitch = (e.beta  - tiltZero.beta)/25;       // front-back tilt -> pitch (raw)
+  ctrl.da = Math.max(-1,Math.min(1, dRoll));       // roll: continuous, never trimmed
+  // pitch: tilt is relative to the TRIMMED neutral; trim slider shifts that neutral
+  ctrl.de = Math.max(-1,Math.min(1, dPitch + pitchTrim));
+  // move the on-screen dot to show stick position
+  const dot=document.getElementById('tiltDot');
+  if(dot){const r=60; dot.style.left=(60+ctrl.da*r-15)+'px'; dot.style.top=(60+ctrl.de*r-15)+'px';}
+}
+function calibrate(){ tiltZero.beta=lastTilt.b; tiltZero.gamma=lastTilt.g; }
+async function enableMotion(){
+  // iOS requires explicit permission, requested from a user gesture
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+      const res=await DeviceOrientationEvent.requestPermission();
+      if(res!=='granted') return false;
+    }
+    window.addEventListener('deviceorientation', onOrient);
+    return true;
+  }catch(e){ return false; }
+}
+document.getElementById('calibBtn').onclick=()=>{ calibrate(); beep(600,0.06,'sine',0.12); };
+document.getElementById('trim').addEventListener('input',e=>{ pitchTrim=(+e.target.value)/100*0.6; });
+
+// fallback: if motion never fires (desktop / denied), allow dragging in the tilt box as the stick
+(function tiltFallback(){
+  const box=document.getElementById('tiltBox'), dot=document.getElementById('tiltDot');
+  let active=null;
+  function set(cx,cy){
+    if(tiltOn) return; // real tilt takes over once available
+    const r=box.getBoundingClientRect();
+    const nx=Math.max(-1,Math.min(1,(cx-r.left)/r.width*2-1));
+    const ny=Math.max(-1,Math.min(1,(cy-r.top)/r.height*2-1));
+    ctrl.da=nx; ctrl.de=ny+pitchTrim;
+    dot.style.left=(60+nx*60-15)+'px'; dot.style.top=(60+ny*60-15)+'px';
+  }
+  function center(){ if(tiltOn)return; ctrl.da=0; ctrl.de=pitchTrim; dot.style.left='60px'; dot.style.top='60px'; }
+  box.addEventListener('touchstart',e=>{if(e.target.id==='calibBtn')return;active=e.changedTouches[0].identifier;const t=e.changedTouches[0];set(t.clientX,t.clientY);e.preventDefault();},{passive:false});
+  box.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===active)set(t.clientX,t.clientY);e.preventDefault();},{passive:false});
+  box.addEventListener('touchend',e=>{for(const t of e.changedTouches)if(t.identifier===active){active=null;center();}},{passive:false});
+  let md=false;box.addEventListener('mousedown',e=>{if(e.target.id==='calibBtn')return;md=true;set(e.clientX,e.clientY);});
+  window.addEventListener('mousemove',e=>{if(md)set(e.clientX,e.clientY);});
+  window.addEventListener('mouseup',()=>{if(md){md=false;center();}});
+})();
+
+// rudder stays on the touch pad (the 'feet')
+/* ---- rudder pedals: linked, and they HOLD where you push (like real pedals) ---- */
+// ctrl.dr in [-1,1]: -1 = full left, +1 = full right. Persists until you push the other side or centre.
+function setPedalVisual(){
+  const v=ctrl.dr; // + = right
+  const L=document.getElementById('pedalL').querySelector('.ptop');
+  const R=document.getElementById('pedalR').querySelector('.ptop');
+  // pushing right pedal: right depresses (taller fill), left rises (shorter)
+  const rightPush=Math.max(0,v), leftPush=Math.max(0,-v);
+  R.style.height=(40+rightPush*55)+'%';
+  L.style.height=(40+leftPush*55)+'%';
+}
+function bindPedal(id,sign){
+  const pedal=document.getElementById(id); let active=null;
+  function press(cy){
+    const r=pedal.getBoundingClientRect();
+    // how far down the pedal you press = how much rudder (top=0, bottom=full)
+    const f=Math.max(0,Math.min(1,(cy-r.top)/r.height));
+    ctrl.dr = sign*f;       // sets and HOLDS; opposite side reacts via setPedalVisual
+    setPedalVisual();
+  }
+  pedal.addEventListener('touchstart',e=>{active=e.changedTouches[0].identifier;press(e.changedTouches[0].clientY);e.preventDefault();},{passive:false});
+  pedal.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===active)press(t.clientY);e.preventDefault();},{passive:false});
+  pedal.addEventListener('touchend',e=>{for(const t of e.changedTouches)if(t.identifier===active)active=null;e.preventDefault();},{passive:false}); // note: does NOT recentre
+  let md=false;pedal.addEventListener('mousedown',e=>{md=true;press(e.clientY);});
+  window.addEventListener('mousemove',e=>{if(md&&pedal.matches(':hover'))press(e.clientY);});
+  window.addEventListener('mouseup',()=>{md=false;});
+}
+bindPedal('pedalL',-1); // left pedal -> left rudder
+bindPedal('pedalR', 1); // right pedal -> right rudder
+document.getElementById('rudCenter').onclick=()=>{ ctrl.dr=0; setPedalVisual(); };
+setPedalVisual();
 document.getElementById('brake').addEventListener('input',e=>{S.brake=+e.target.value;});
 
 /* ---------------- loop ---------------- */
@@ -694,10 +809,17 @@ document.querySelectorAll('.scn button').forEach(b=>b.onclick=()=>{document.quer
 document.getElementById('startBtn').onclick=async()=>{
   initAudio();
   const btn=document.getElementById('startBtn');
-  if(!HEIGHT){ btn.textContent='LOADING TERRAIN…'; await loadTerrain(); btn.textContent='START FLYING'; }
+  // request tilt permission (iOS needs this from a tap)
+  btn.textContent='ENABLING TILT…';
+  await enableMotion();
+  if(!HEIGHT){ btn.textContent='LOADING TERRAIN…'; await loadTerrain(); }
+  btn.textContent='START FLYING';
   setup(scenario);
   document.getElementById('brake').value=0;
+  document.getElementById('trim').value=0; pitchTrim=0;
   document.getElementById('menu').classList.add('hidden');
+  // calibrate to however the iPad is being held right now
+  setTimeout(calibrate,300);
   running=true;tPrev=performance.now();
 };
 document.getElementById('resetBtn').onclick=()=>{running=false;document.getElementById('menu').classList.remove('hidden');};
