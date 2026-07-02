@@ -10,6 +10,10 @@
   html,body{height:100%;width:100%;overflow:hidden;background:#04070d;color:#cfe3ff;
     font-family:'Chakra Petch',sans-serif;touch-action:none;overscroll-behavior:none;position:fixed;}
   canvas{display:block;width:100%;height:100%;touch-action:none;}
+  #gl{position:absolute;inset:0;z-index:0;}
+  #c{position:absolute;inset:0;z-index:1;background:transparent;}
+  #viewBtn{position:fixed;top:8px;right:96px;z-index:7;padding:7px 13px;font-size:11px;
+    background:rgba(14,24,44,0.8);color:#9fb6da;border:2px solid #1c3354;box-shadow:none;border-radius:999px;}
   #app{position:fixed;inset:0;}
 
   .pad{position:fixed;bottom:16px;border-radius:18px;background:rgba(14,24,44,0.72);
@@ -65,9 +69,11 @@
   #resetBtn{position:fixed;top:8px;right:12px;z-index:7;padding:7px 13px;font-size:11px;background:rgba(14,24,44,0.8);color:#9fb6da;border:2px solid #1c3354;box-shadow:none;}
   #lab{position:fixed;top:8px;left:12px;z-index:7;font-size:11px;letter-spacing:1px;color:#7f9fce;}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
-<div id="app"><canvas id="c"></canvas></div>
+<div id="app"><canvas id="gl"></canvas><canvas id="c"></canvas></div>
+<button id="viewBtn">CHASE VIEW</button>
 <div id="lab"></div>
 <button id="resetBtn">RESET</button>
 <div id="warn"><span id="stallW">STALL</span><span id="spinW">SPIN — OPP RUDDER, STICK FWD</span></div>
@@ -95,7 +101,8 @@
     <b>Physics:</b> genuine six-degree-of-freedom rigid body. Forces &amp; moments from a lift curve and drag polar fitted to published ASK-21 data (35 kn stall, 34:1 at 49 kn, 0.64 m/s min sink). Spins emerge from asymmetric wing stall, not scripting.<br><br>
     <b>Map:</b> Dunstable Downs — the Chiltern escarpment runs NE–SW and faces NW. With a NW wind you get ridge lift along the slope; thermals drift downwind. London GC sits at the foot.<br><br>
     <b>Controls:</b> the iPad <b>IS the stick</b> — tilt it left/right to roll, tilt fore/aft for pitch. Tap SET NEUTRAL to zero the stick to however you're holding it. Right pad = rudder ("feet"). PITCH TRIM slider sets the hands-level pitch reference (roll is never trimmed). Side slider = airbrakes. Keep the yaw string centred.<br><br>
-    <b>Honest seams:</b> mass/area/polar/stall are from real data; the stability derivatives &amp; inertias are textbook estimates tuned to the POH's docile handling. No g-feel or buffet. Mental rehearsal only — your London GC instructors are the authority.
+    <b>Honest seams:</b> mass/area/polar/stall are from real data; the stability derivatives &amp; inertias are textbook estimates tuned to the POH's docile handling. No g-feel or buffet. Mental rehearsal only — your London GC instructors are the authority.<br><br>
+    <span style="color:#7d8896;font-size:11px">3D model: "ASK 21 Mi" by helijah — CC Attribution (sketchfab.com/helijah)</span>
   </div>
   <div class="tag">SCENARIO</div>
   <div class="scn">
@@ -407,35 +414,160 @@ function warnings(){
   document.getElementById('spinW').classList.toggle('on', S.spinning && S.alive);
 }
 
-/* ---------------- render: realistic round-gauge K21 panel ---------------- */
+/* ================= THREE.JS WORLD (chase + cockpit) =================
+   three coords: x=East, y=Up, z=South(-North). ned(N,E,D) -> three(E,-D,-N). */
+let viewMode='cockpit';
+let renderer,scene,camCockpit,camChase,gliderGrp,terrainMesh,sunL;
+function ned2three(v){return new THREE.Vector3(v[1],-v[2],-v[0]);}
+function initThree(){
+  const glc=document.getElementById('gl');
+  renderer=new THREE.WebGLRenderer({canvas:glc,antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
+  renderer.setSize(innerWidth,innerHeight);
+  scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x7fb0d8);
+  scene.fog=new THREE.Fog(0xcfe0ee,3000,12000);
+  camCockpit=new THREE.PerspectiveCamera(62,innerWidth/innerHeight,0.5,20000);
+  camChase=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.5,20000);
+  scene.add(new THREE.HemisphereLight(0xbcd8ff,0x50663a,0.9));
+  sunL=new THREE.DirectionalLight(0xfff2d8,0.9); sunL.position.set(2000,3000,-1500); scene.add(sunL);
+  gliderGrp=new THREE.Group(); scene.add(gliderGrp);
+  loadGliderModel();
+}
+/* minimal OBJ parser: positions + triangulated faces, single white material */
+async function loadGliderModel(){
+  let geo=null;
+  try{
+    const txt=await (await fetch('ask21mi.obj')).text();
+    const vs=[],tris=[];
+    for(const line of txt.split('\n')){
+      if(line.startsWith('v ')){const p=line.split(/\s+/);vs.push([+p[1],+p[2],+p[3]]);}
+      else if(line.startsWith('f ')){
+        const idx=line.slice(2).trim().split(/\s+/).map(t=>parseInt(t.split('/')[0],10)-1);
+        for(let i=1;i<idx.length-1;i++){tris.push(idx[0],idx[i],idx[i+1]);} // fan triangulation
+      }
+    }
+    const pos=new Float32Array(tris.length*3);
+    for(let i=0;i<tris.length;i++){const v=vs[tris[i]];pos[i*3]=v[0];pos[i*3+1]=v[1];pos[i*3+2]=v[2];}
+    geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    geo.computeVertexNormals();
+  }catch(e){ geo=null; }
+  let mesh;
+  const mat=new THREE.MeshStandardMaterial({color:0xf2f4f7,roughness:0.55,metalness:0.05});
+  if(geo){ mesh=new THREE.Mesh(geo,mat); }
+  else { // fallback simple glider if OBJ missing
+    const g=new THREE.Group();
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.12,8,10),mat);
+    fus.rotation.z=Math.PI/2; g.add(fus);
+    const wing=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.08,17),mat); wing.position.y=0.25; g.add(wing);
+    const tail=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.06,3.2),mat); tail.position.set(3.8,1.1,0); g.add(tail);
+    const fin=new THREE.Mesh(new THREE.BoxGeometry(0.5,1.2,0.06),mat); fin.position.set(3.8,0.55,0); g.add(fin);
+    mesh=g;
+  }
+  // model frame: nose -X, up +Y, span Z. Rotate so nose -> -Z (three forward).
+  mesh.rotation.y=-Math.PI/2;
+  gliderGrp.add(mesh);
+  // required attribution is shown on the menu panel
+}
+/* terrain mesh from the (real or fallback) heightmap */
+function buildTerrainMesh(){
+  if(terrainMesh){scene.remove(terrainMesh);terrainMesh.geometry.dispose();}
+  const size=12000,seg=96;
+  const geo=new THREE.PlaneGeometry(size,size,seg,seg);
+  geo.rotateX(-Math.PI/2); // lie flat, y-up
+  const posA=geo.attributes.position, colors=[];
+  const top=Math.max(60,ENV.ridgeTop);
+  for(let i=0;i<posA.count;i++){
+    const x=posA.getX(i), z=posA.getZ(i);
+    // three x=E, z=South => N=-z, E=x
+    const h=terrainAlt(-z,x);
+    posA.setY(i,h);
+    const t=Math.max(0,Math.min(1,h/top));
+    // valley green -> chalk-grass light on the tops
+    colors.push(0.30+0.35*t, 0.46+0.30*t, 0.24+0.28*t);
+  }
+  geo.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshLambertMaterial({vertexColors:true});
+  terrainMesh=new THREE.Mesh(geo,mat); scene.add(terrainMesh);
+  // simple runway strip at LGC (origin), aligned with the ridge
+  const run=new THREE.Mesh(new THREE.PlaneGeometry(400,26),new THREE.MeshLambertMaterial({color:0x9aa58f}));
+  run.rotation.x=-Math.PI/2; run.rotation.z=ENV.ridgeHeading;
+  run.position.set(0,terrainAlt(0,0)+0.4,0);
+  terrainMesh.add(run);
+}
+/* per-frame: place glider + cameras from flight state */
+const _sm={x:0,y:0,z:0,init:false};
+function updateThree(){
+  if(!renderer) return;
+  const p=ned2three([S.posN,S.posE,S.posD]);
+  const fwd=ned2three(b2w(S.q,[1,0,0]));
+  const up =ned2three(b2w(S.q,[0,0,-1]));
+  const rgt=ned2three(b2w(S.q,[0,1,0]));
+  gliderGrp.position.copy(p);
+  const m=new THREE.Matrix4().makeBasis(rgt,up,fwd.clone().negate());
+  gliderGrp.quaternion.setFromRotationMatrix(m);
+  gliderGrp.visible=(viewMode==='chase');
+  if(viewMode==='chase'){
+    // smoothed camera behind & above, looking at the glider
+    const want=p.clone().add(fwd.clone().multiplyScalar(-26)).add(new THREE.Vector3(0,8,0));
+    if(!_sm.init){_sm.x=want.x;_sm.y=want.y;_sm.z=want.z;_sm.init=true;}
+    _sm.x+= (want.x-_sm.x)*0.08; _sm.y+=(want.y-_sm.y)*0.08; _sm.z+=(want.z-_sm.z)*0.08;
+    camChase.position.set(_sm.x,_sm.y,_sm.z);
+    camChase.lookAt(p);
+    renderer.render(scene,camChase);
+  } else {
+    camCockpit.position.copy(p).add(up.clone().multiplyScalar(0.35));
+    camCockpit.quaternion.setFromRotationMatrix(m);
+    renderer.render(scene,camCockpit);
+  }
+}
+function threeResize(){ if(!renderer)return;
+  renderer.setSize(innerWidth,innerHeight);
+  camCockpit.aspect=camChase.aspect=innerWidth/innerHeight;
+  camCockpit.updateProjectionMatrix(); camChase.updateProjectionMatrix(); }
+addEventListener('resize',threeResize);
+document.getElementById('viewBtn').onclick=()=>{
+  viewMode=viewMode==='cockpit'?'chase':'cockpit';
+  document.getElementById('viewBtn').textContent=viewMode==='cockpit'?'CHASE VIEW':'COCKPIT VIEW';
+  _sm.init=false;
+};
+
+/* ---------------- 2D overlay: gauges (cockpit) or minimal HUD (chase) ---------------- */
 function draw(){
-  ctx.clearRect(0,0,W,H);
+  ctx.clearRect(0,0,W,H); // transparent: the THREE world shows through
   const eul=quatToEuler(S.q); const roll=eul[0],pitch=eul[1],yaw=eul[2];
 
-  // ---- out-the-window 3D view (top portion) ----
-  const horizonH = H*0.62;            // world fills upper 62%, panel below
-  drawWorld(0,0,W,horizonH);
+  if(viewMode==='cockpit'){
+    const horizonH = H*0.62;
+    // cockpit coaming (opaque dashboard)
+    const coam=ctx.createLinearGradient(0,horizonH-20,0,H);
+    coam.addColorStop(0,'#23262b'); coam.addColorStop(0.12,'#16191d'); coam.addColorStop(1,'#0d0f12');
+    ctx.fillStyle=coam; ctx.fillRect(0,horizonH-18,W,H-horizonH+18);
+    ctx.strokeStyle='#3a3f46'; ctx.lineWidth=3; ctx.beginPath();
+    ctx.moveTo(0,horizonH-6); ctx.quadraticCurveTo(W*0.5,horizonH-26,W,horizonH-6); ctx.stroke();
 
-  // ---- cockpit coaming (dark dashboard the gauges sit in) ----
-  const coam=ctx.createLinearGradient(0,horizonH-20,0,H);
-  coam.addColorStop(0,'#23262b'); coam.addColorStop(0.12,'#16191d'); coam.addColorStop(1,'#0d0f12');
-  ctx.fillStyle=coam; ctx.fillRect(0,horizonH-18,W,H-horizonH+18);
-  // curved coaming top edge
-  ctx.strokeStyle='#3a3f46'; ctx.lineWidth=3; ctx.beginPath();
-  ctx.moveTo(0,horizonH-6); ctx.quadraticCurveTo(W*0.5,horizonH-26,W,horizonH-6); ctx.stroke();
-
-  // ---- compact instrument cluster, CENTERED so it clears the corner control pads ----
-  const gR=Math.min(W*0.085, (H-horizonH)*0.32);
-  const rowY=horizonH + (H-horizonH)*0.42;
-  const aR=gR*1.15;
-  // five gauges spread across the central band (0.27..0.73), corners left free for pads
-  asiGauge(W*0.29, rowY, gR);
-  attitudeGauge(W*0.40, rowY, aR, roll, pitch);
-  varioGauge(W*0.51, rowY, gR);
-  altGauge(W*0.62, rowY, gR);
-  compassGauge(W*0.73, rowY, gR, yaw);
-  slipStrip(W*0.40, rowY+aR+10, aR);
-  gAoaGauge(W*0.51, rowY+gR+gR*0.5, gR*0.66);
+    const gR=Math.min(W*0.085, (H-horizonH)*0.32);
+    const rowY=horizonH + (H-horizonH)*0.42;
+    const aR=gR*1.15;
+    asiGauge(W*0.29, rowY, gR);
+    attitudeGauge(W*0.40, rowY, aR, roll, pitch);
+    varioGauge(W*0.51, rowY, gR);
+    altGauge(W*0.62, rowY, gR);
+    compassGauge(W*0.73, rowY, gR, yaw);
+    slipStrip(W*0.40, rowY+aR+10, aR);
+    gAoaGauge(W*0.51, rowY+gR+gR*0.5, gR*0.66);
+    drawYawString(0,0,W,horizonH);
+  } else {
+    // chase view: minimal digital HUD, no panel
+    ctx.fillStyle='rgba(8,14,28,0.65)'; ctx.fillRect(10,50,190,86);
+    ctx.fillStyle='#cfe3ff'; ctx.font='700 16px Share Tech Mono'; ctx.textAlign='left';
+    ctx.fillText('IAS '+Math.round(S.V/KT)+' kt',20,74);
+    ctx.fillText('ALT '+Math.round((-S.posD)*3.281)+' ft',20,96);
+    const v=S.vario; ctx.fillStyle=v>=0?'#7af0c0':'#ff9b6a';
+    ctx.fillText('VAR '+(v>=0?'+':'')+v.toFixed(1)+' m/s',20,118);
+  }
 
   miniMap(yaw);
   ctx.fillStyle='#eaf4ff';ctx.font='12px Chakra Petch';ctx.textAlign='left';
@@ -514,22 +646,21 @@ function drawWorld(vx,vy,vw,vh){
   if(fld){ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='11px Share Tech Mono';ctx.textAlign='center';
     ctx.beginPath();ctx.arc(fld[0],fld[1],4,0,7);ctx.fill();ctx.fillText('LGC',fld[0],fld[1]-8);}
   ctx.restore();
-
-  // ---- red wool yaw string taped to the canopy ----
-  // In flight the airflow blows the string back UP the canopy toward the pilot.
-  // Tab is at the BOTTOM (anchor); the free end streams upward.
-  // beta>0 = airflow from the LEFT -> free end swings to the RIGHT (opposite side). (you "step on the string")
+}
+/* ---- red wool yaw string taped to the canopy (cockpit view) ----
+   Airflow blows the string back UP the canopy toward the pilot; tab at the BOTTOM.
+   beta>0 = airflow from the LEFT -> free end swings RIGHT (opposite side): "step on the string". */
+function drawYawString(vx,vy,vw,vh){
   ctx.save();
-  const ax=vx+vw*0.5, ay=vy+vh*0.42;          // tape anchor (bottom of the string)
-  const len=vh*0.18;                           // string length
-  const defl=Math.max(-1,Math.min(1,-S.beta*6)); // free end swings OPPOSITE to airflow side
-  const ex=ax + defl*len*0.9;                  // free end x
-  const ey=ay - len*Math.sqrt(Math.max(0.05,1-defl*defl)); // streams UP-screen (toward pilot)
+  const ax=vx+vw*0.5, ay=vy+vh*0.42;
+  const len=vh*0.18;
+  const defl=Math.max(-1,Math.min(1,-S.beta*6));
+  const ex=ax + defl*len*0.9;
+  const ey=ay - len*Math.sqrt(Math.max(0.05,1-defl*defl));
   ctx.strokeStyle='#e23b3b'; ctx.lineWidth=4; ctx.lineCap='round';
   ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=3;
   ctx.beginPath(); ctx.moveTo(ax,ay);
   ctx.quadraticCurveTo(ax+defl*len*0.5, ay-len*0.55, ex,ey); ctx.stroke();
-  // tape tab at the anchor (bottom)
   ctx.shadowBlur=0; ctx.fillStyle='rgba(230,230,235,0.85)';
   ctx.fillRect(ax-7,ay-4,14,8);
   ctx.restore();
@@ -798,7 +929,7 @@ function frame(t){
     let dt=(t-tPrev)/1000; if(!dt||dt>0.05)dt=0.016; tPrev=t;
     // substep for stability
     const N=16,h=dt/N; for(let i=0;i<N;i++) physics(h);
-    audioUpdate(dt); draw();
+    audioUpdate(dt); updateThree(); draw();
   }
   requestAnimationFrame(frame);
 }
@@ -809,11 +940,12 @@ document.querySelectorAll('.scn button').forEach(b=>b.onclick=()=>{document.quer
 document.getElementById('startBtn').onclick=async()=>{
   initAudio();
   const btn=document.getElementById('startBtn');
-  // request tilt permission (iOS needs this from a tap)
   btn.textContent='ENABLING TILT…';
   await enableMotion();
   if(!HEIGHT){ btn.textContent='LOADING TERRAIN…'; await loadTerrain(); }
   btn.textContent='START FLYING';
+  if(!renderer) initThree();
+  buildTerrainMesh();
   setup(scenario);
   document.getElementById('brake').value=0;
   document.getElementById('trim').value=0; pitchTrim=0;
