@@ -14,6 +14,9 @@
   #c{position:absolute;inset:0;z-index:1;background:transparent;}
   #viewBtn{position:fixed;top:8px;right:96px;z-index:7;padding:7px 13px;font-size:11px;
     background:rgba(14,24,44,0.8);color:#9fb6da;border:2px solid #1c3354;box-shadow:none;border-radius:999px;}
+  #engBtn{position:fixed;top:8px;right:212px;z-index:7;padding:7px 13px;font-size:11px;
+    background:rgba(14,24,44,0.8);color:#9fb6da;border:2px solid #1c3354;box-shadow:none;border-radius:999px;}
+  #engBtn.on{color:#7af0c0;border-color:#2f6b4f;}
   #app{position:fixed;inset:0;}
 
   .pad{position:fixed;bottom:16px;border-radius:18px;background:rgba(14,24,44,0.72);
@@ -74,6 +77,7 @@
 <body>
 <div id="app"><canvas id="gl"></canvas><canvas id="c"></canvas></div>
 <button id="viewBtn">CHASE VIEW</button>
+<button id="engBtn">ENGINE OFF</button>
 <div id="lab"></div>
 <button id="resetBtn">RESET</button>
 <div id="warn"><span id="stallW">STALL</span><span id="spinW">SPIN — OPP RUDDER, STICK FWD</span></div>
@@ -339,7 +343,8 @@ function physics(dt){
 
   // --- aero forces (body) ---
   const L=qbar*AC.S*CL, D=qbar*AC.S*CD, Yf=qbar*AC.S*CY;
-  const Fx = L*Math.sin(alpha) - D*Math.cos(alpha);
+  const T=(typeof ENG!=='undefined'&&ENG.on)?engineThrust(V):0; // Mi self-launch thrust along body x
+  const Fx = L*Math.sin(alpha) - D*Math.cos(alpha) + T;
   const Fz = -L*Math.cos(alpha) - D*Math.sin(alpha);
   const Fy = Yf;
 
@@ -434,73 +439,152 @@ function initThree(){
   gliderGrp=new THREE.Group(); scene.add(gliderGrp);
   loadGliderModel();
 }
-/* minimal OBJ parser: positions + triangulated faces, single white material */
+/* per-object OBJ parser: separates control surfaces so they can move.
+   Model frame: nose -X (so trailing edges are +X), up +Y, span Z. */
+const ANIM={aileronG:null,aileronD:null,profondeur:null,direction:null,
+            spoilerG:null,spoilerD:null,helice:null,moteur:null};
 async function loadGliderModel(){
-  let geo=null;
+  let objs=null, vs=[];
   try{
     const txt=await (await fetch('ask21mi.obj')).text();
-    const vs=[],tris=[];
+    objs={}; let cur='_';
     for(const line of txt.split('\n')){
-      if(line.startsWith('v ')){const p=line.split(/\s+/);vs.push([+p[1],+p[2],+p[3]]);}
+      if(line.startsWith('o ')){ cur=line.slice(2).trim(); objs[cur]=objs[cur]||[]; }
+      else if(line.startsWith('v ')){const p=line.split(/\s+/);vs.push([+p[1],+p[2],+p[3]]);}
       else if(line.startsWith('f ')){
         const idx=line.slice(2).trim().split(/\s+/).map(t=>parseInt(t.split('/')[0],10)-1);
-        for(let i=1;i<idx.length-1;i++){tris.push(idx[0],idx[i],idx[i+1]);} // fan triangulation
+        const arr=objs[cur]||(objs[cur]=[]);
+        for(let i=1;i<idx.length-1;i++){arr.push(idx[0],idx[i],idx[i+1]);}
       }
     }
+  }catch(e){ objs=null; }
+  const mat=new THREE.MeshStandardMaterial({color:0xf2f4f7,roughness:0.55,metalness:0.05,side:THREE.DoubleSide});
+  const modelRoot=new THREE.Group();
+  modelRoot.rotation.y=-Math.PI/2; // nose(-X) -> three forward(-Z)
+  gliderGrp.add(modelRoot);
+  if(!objs){ // fallback simple glider
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.12,8,10),mat);
+    fus.rotation.z=Math.PI/2; modelRoot.add(fus);
+    const wing=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.08,17),mat); wing.position.y=0.25; modelRoot.add(wing);
+    return;
+  }
+  function makeGeo(tris){
     const pos=new Float32Array(tris.length*3);
     for(let i=0;i<tris.length;i++){const v=vs[tris[i]];pos[i*3]=v[0];pos[i*3+1]=v[1];pos[i*3+2]=v[2];}
-    geo=new THREE.BufferGeometry();
-    geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-    geo.computeVertexNormals();
-  }catch(e){ geo=null; }
-  let mesh;
-  const mat=new THREE.MeshStandardMaterial({color:0xf2f4f7,roughness:0.55,metalness:0.05});
-  if(geo){ mesh=new THREE.Mesh(geo,mat); }
-  else { // fallback simple glider if OBJ missing
-    const g=new THREE.Group();
-    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.12,8,10),mat);
-    fus.rotation.z=Math.PI/2; g.add(fus);
-    const wing=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.08,17),mat); wing.position.y=0.25; g.add(wing);
-    const tail=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.06,3.2),mat); tail.position.set(3.8,1.1,0); g.add(tail);
-    const fin=new THREE.Mesh(new THREE.BoxGeometry(0.5,1.2,0.06),mat); fin.position.set(3.8,0.55,0); g.add(fin);
-    mesh=g;
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g.computeVertexNormals(); return g;
   }
-  // model frame: nose -X, up +Y, span Z. Rotate so nose -> -Z (three forward).
-  mesh.rotation.y=-Math.PI/2;
-  gliderGrp.add(mesh);
-  // required attribution is shown on the menu panel
+  function bbox(tris){
+    const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
+    for(const t of tris){const v=vs[t];for(let k=0;k<3;k++){if(v[k]<mn[k])mn[k]=v[k];if(v[k]>mx[k])mx[k]=v[k];}}
+    return {mn,mx,c:[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2]};
+  }
+  const staticTris=[];
+  const animKeys=Object.keys(ANIM);
+  for(const name in objs){
+    const tris=objs[name]; if(!tris.length) continue;
+    const key=animKeys.find(k=>name.startsWith(k));
+    if(!key){ staticTris.push(...tris); continue; }
+    const bb=bbox(tris), geo=makeGeo(tris);
+    let hinge;
+    if(key==='direction'){ hinge=[bb.mn[0], bb.c[1], bb.c[2]]; }         // rudder: vertical hinge at forward edge
+    else if(key==='helice'){ hinge=bb.c; }                               // prop: spin about its centre
+    else { hinge=[bb.mn[0], bb.c[1], bb.c[2]]; }                         // ailerons/elevator/spoilers: spanwise hinge at forward edge
+    geo.translate(-hinge[0],-hinge[1],-hinge[2]);
+    const pivot=new THREE.Group(); pivot.position.set(hinge[0],hinge[1],hinge[2]);
+    pivot.add(new THREE.Mesh(geo,mat)); modelRoot.add(pivot);
+    pivot.userData.baseY=hinge[1];
+    ANIM[key]=pivot;
+  }
+  if(staticTris.length) modelRoot.add(new THREE.Mesh(makeGeo(staticTris),mat));
+  // engine starts retracted (hidden) — this is the self-launching Mi
+  if(ANIM.moteur)ANIM.moteur.visible=false;
+  if(ANIM.helice)ANIM.helice.visible=false;
 }
 /* terrain mesh from the (real or fallback) heightmap */
+/* ---- Esri World Imagery tiles draped on the terrain (attribution shown) ---- */
+const SAT={z:14, tex:null, on:false, x0:0,y0:0,x1:0,y1:0};
+function m_x(lon){return (lon+180)/360*Math.pow(2,SAT.z);}
+function m_y(lat){const r=lat*Math.PI/180;return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,SAT.z);}
+function satBounds(){
+  const half=6000;
+  const c1=neToLatLon( half,-half), c2=neToLatLon(-half, half);
+  SAT.x0=Math.floor(Math.min(m_x(c1[1]),m_x(c2[1]))); SAT.x1=Math.floor(Math.max(m_x(c1[1]),m_x(c2[1])));
+  SAT.y0=Math.floor(Math.min(m_y(c1[0]),m_y(c2[0]))); SAT.y1=Math.floor(Math.max(m_y(c1[0]),m_y(c2[0])));
+}
+async function loadSatTexture(){
+  if(SAT.tex||SAT.loading) return; SAT.loading=true;
+  try{
+    satBounds();
+    const cols=SAT.x1-SAT.x0+1, rows=SAT.y1-SAT.y0+1;
+    const cv=document.createElement('canvas'); cv.width=cols*256; cv.height=rows*256;
+    const c2=cv.getContext('2d');
+    const jobs=[];
+    for(let ty=SAT.y0;ty<=SAT.y1;ty++)for(let tx=SAT.x0;tx<=SAT.x1;tx++){
+      jobs.push(new Promise(res=>{
+        const im=new Image(); im.crossOrigin='anonymous';
+        im.onload=()=>{c2.drawImage(im,(tx-SAT.x0)*256,(ty-SAT.y0)*256);res(1);};
+        im.onerror=()=>res(0);
+        im.src='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'+SAT.z+'/'+ty+'/'+tx;
+      }));
+    }
+    const got=(await Promise.all(jobs)).reduce((a,b)=>a+b,0);
+    if(got<jobs.length*0.5) throw new Error('too few tiles');
+    SAT.tex=new THREE.CanvasTexture(cv); SAT.tex.anisotropy=4;
+    if(terrainMesh){ terrainMesh.material=new THREE.MeshLambertMaterial({map:SAT.tex}); SAT.on=true; }
+  }catch(e){ /* stay on green shading */ }
+  SAT.loading=false;
+}
 function buildTerrainMesh(){
   if(terrainMesh){scene.remove(terrainMesh);terrainMesh.geometry.dispose();}
   const size=12000,seg=96;
   const geo=new THREE.PlaneGeometry(size,size,seg,seg);
   geo.rotateX(-Math.PI/2); // lie flat, y-up
-  const posA=geo.attributes.position, colors=[];
+  const posA=geo.attributes.position, colors=[], uvs=[];
   const top=Math.max(60,ENV.ridgeTop);
+  satBounds();
+  const uSpan=SAT.x1+1-SAT.x0, vSpan=SAT.y1+1-SAT.y0;
   for(let i=0;i<posA.count;i++){
     const x=posA.getX(i), z=posA.getZ(i);
     // three x=E, z=South => N=-z, E=x
     const h=terrainAlt(-z,x);
     posA.setY(i,h);
     const t=Math.max(0,Math.min(1,h/top));
-    // valley green -> chalk-grass light on the tops
     colors.push(0.30+0.35*t, 0.46+0.30*t, 0.24+0.28*t);
+    const ll=neToLatLon(-z,x);
+    uvs.push((m_x(ll[1])-SAT.x0)/uSpan, 1-(m_y(ll[0])-SAT.y0)/vSpan);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
   geo.computeVertexNormals();
-  const mat=new THREE.MeshLambertMaterial({vertexColors:true});
+  const mat=SAT.tex?new THREE.MeshLambertMaterial({map:SAT.tex}):new THREE.MeshLambertMaterial({vertexColors:true});
+  SAT.on=!!SAT.tex;
   terrainMesh=new THREE.Mesh(geo,mat); scene.add(terrainMesh);
-  // simple runway strip at LGC (origin), aligned with the ridge
-  const run=new THREE.Mesh(new THREE.PlaneGeometry(400,26),new THREE.MeshLambertMaterial({color:0x9aa58f}));
-  run.rotation.x=-Math.PI/2; run.rotation.z=ENV.ridgeHeading;
-  run.position.set(0,terrainAlt(0,0)+0.4,0);
-  terrainMesh.add(run);
+  // simple runway strip at LGC (origin), aligned with the ridge (hidden under real imagery)
+  if(!SAT.tex){
+    const run=new THREE.Mesh(new THREE.PlaneGeometry(400,26),new THREE.MeshLambertMaterial({color:0x9aa58f}));
+    run.rotation.x=-Math.PI/2; run.rotation.z=ENV.ridgeHeading;
+    run.position.set(0,terrainAlt(0,0)+0.4,0);
+    terrainMesh.add(run);
+  }
 }
 /* per-frame: place glider + cameras from flight state */
 const _sm={x:0,y:0,z:0,init:false};
 function updateThree(){
   if(!renderer) return;
+  // --- animate control surfaces from the pilot's actual inputs ---
+  // (hinge lines estimated from part geometry: angles are visual approximations)
+  if(ANIM.aileronD) ANIM.aileronD.rotation.z =  0.35*ctrl.da;   // stick right -> right aileron up
+  if(ANIM.aileronG) ANIM.aileronG.rotation.z = -0.35*ctrl.da;   // ...left aileron down
+  if(ANIM.profondeur) ANIM.profondeur.rotation.z = 0.30*ctrl.de; // pull -> elevator TE up
+  if(ANIM.direction)  ANIM.direction.rotation.y  = 0.50*ctrl.dr; // right pedal -> rudder TE right
+  const brk=(S.brake||0)/100;
+  if(ANIM.spoilerG){ ANIM.spoilerG.position.y = ANIM.spoilerG.userData.baseY + 0.22*brk; ANIM.spoilerG.rotation.z=0.25*brk; }
+  if(ANIM.spoilerD){ ANIM.spoilerD.position.y = ANIM.spoilerD.userData.baseY + 0.22*brk; ANIM.spoilerD.rotation.z=0.25*brk; }
+  if(ANIM.moteur) ANIM.moteur.visible = ENG.on;
+  if(ANIM.helice){ ANIM.helice.visible = ENG.on; if(ENG.on) ANIM.helice.rotation.x += 0.9; }
+
   const p=ned2three([S.posN,S.posE,S.posD]);
   const fwd=ned2three(b2w(S.q,[1,0,0]));
   const up =ned2three(b2w(S.q,[0,0,-1]));
@@ -532,6 +616,27 @@ document.getElementById('viewBtn').onclick=()=>{
   viewMode=viewMode==='cockpit'?'chase':'cockpit';
   document.getElementById('viewBtn').textContent=viewMode==='cockpit'?'CHASE VIEW':'COCKPIT VIEW';
   _sm.init=false;
+};
+
+/* ---- ASK 21 Mi self-launch engine: ~41 kW rotary on a pop-up pylon [M spec, E thrust model] ---- */
+const ENG={on:false, osc:null, gain:null};
+function engineThrust(V){ // prop thrust ~ eta*P/V, capped at low speed; tuned for ~2.5-3 m/s climb
+  return Math.min(1500, 0.65*41000/Math.max(V,8));
+}
+function engineSound(on){
+  try{
+    initAudio();
+    if(on&&!ENG.osc){
+      ENG.osc=actx.createOscillator(); ENG.gain=actx.createGain();
+      ENG.osc.type='sawtooth'; ENG.osc.frequency.value=95; ENG.gain.gain.value=0.05;
+      ENG.osc.connect(ENG.gain); ENG.gain.connect(actx.destination); ENG.osc.start();
+    } else if(!on&&ENG.osc){ ENG.osc.stop(); ENG.osc=null; ENG.gain=null; }
+  }catch(e){}
+}
+document.getElementById('engBtn').onclick=()=>{
+  ENG.on=!ENG.on; engineSound(ENG.on);
+  const b=document.getElementById('engBtn');
+  b.textContent=ENG.on?'ENGINE ON':'ENGINE OFF'; b.classList.toggle('on',ENG.on);
 };
 
 /* ---------------- 2D overlay: gauges (cockpit) or minimal HUD (chase) ---------------- */
@@ -573,6 +678,7 @@ function draw(){
   ctx.fillStyle='#eaf4ff';ctx.font='12px Chakra Petch';ctx.textAlign='left';
   ctx.fillText(({ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[scenario])||'',14,22);
   if(HEIGHT){ctx.fillStyle='#7d8896';ctx.font='10px Share Tech Mono';ctx.fillText('real terrain · Dunstable',14,38);}
+  if(SAT.on){ctx.fillStyle='#7d8896';ctx.font='9px Share Tech Mono';ctx.textAlign='right';ctx.fillText('Imagery © Esri, Maxar, Earthstar Geographics',W-10,H-8);ctx.textAlign='left';}
   if(!S.alive) crashed();
   warnings();
 }
@@ -946,6 +1052,10 @@ document.getElementById('startBtn').onclick=async()=>{
   btn.textContent='START FLYING';
   if(!renderer) initThree();
   buildTerrainMesh();
+  loadSatTexture(); // async: swaps in real imagery when tiles arrive
+  ENG.on=false; engineSound(false);
+  document.getElementById('engBtn').textContent='ENGINE OFF';
+  document.getElementById('engBtn').classList.remove('on');
   setup(scenario);
   document.getElementById('brake').value=0;
   document.getElementById('trim').value=0; pitchTrim=0;
