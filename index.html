@@ -22,17 +22,18 @@
   .pad{position:fixed;bottom:16px;border-radius:18px;background:rgba(14,24,44,0.72);
     border:2px solid #1c3354;touch-action:none;z-index:5;}
   #stickPad{left:14px;width:200px;height:200px;}
-  #tiltBox{position:fixed;left:14px;bottom:16px;width:150px;height:150px;border-radius:18px;
+  #tiltBox{position:fixed;right:14px;bottom:16px;width:150px;height:150px;border-radius:18px;
     background:rgba(14,24,44,0.72);border:2px solid #1c3354;z-index:5;}
   #tiltBox .lbl{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:10px;letter-spacing:1px;color:#6f8fc0;}
   #tiltDot{position:absolute;width:30px;height:30px;border-radius:50%;left:60px;top:60px;
     background:radial-gradient(circle at 40% 35%,#39d0ff,#0b6f9c);box-shadow:0 0 14px rgba(57,208,255,0.7);pointer-events:none;}
   #calibBtn{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);padding:7px 12px;font-size:11px;
     background:linear-gradient(135deg,#39d0ff,#7af0c0);color:#04101e;border:none;border-radius:999px;}
-  #trimWrap{position:fixed;left:178px;bottom:16px;z-index:5;text-align:center;}
-  #trimWrap .lbl{font-size:9px;letter-spacing:1px;color:#6f8fc0;margin-bottom:4px;}
-  #trim{writing-mode:vertical-lr;direction:rtl;width:26px;height:120px;accent-color:#39d0ff;}
-  #rudderPedals{position:fixed;right:14px;bottom:16px;z-index:5;display:flex;align-items:flex-end;gap:8px;}
+  /* left-hand levers, like the real front cockpit: BLUE airbrake, GREEN trim */
+  #trimWrap{position:fixed;left:12px;top:52%;z-index:5;text-align:center;}
+  #trimWrap .lbl{font-size:9px;letter-spacing:1px;color:#35c26a;margin-bottom:4px;}
+  #trim{writing-mode:vertical-lr;direction:rtl;width:26px;height:110px;accent-color:#35c26a;}
+  #rudderPedals{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:5;display:flex;align-items:flex-end;gap:8px;}
   .pedal{position:relative;width:62px;height:150px;border-radius:14px;background:rgba(14,24,44,0.72);
     border:2px solid #1c3354;overflow:hidden;touch-action:none;}
   .pedal .ptop{position:absolute;left:0;right:0;bottom:0;height:40%;
@@ -46,9 +47,9 @@
   #stickKnob{background:radial-gradient(circle at 40% 35%,#39d0ff,#0b6f9c);box-shadow:0 0 16px rgba(57,208,255,0.7);}
   #rudderKnob{background:radial-gradient(circle at 40% 35%,#ff7adf,#9c2b78);box-shadow:0 0 16px rgba(255,122,223,0.7);}
 
-  #brakeWrap{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:5;text-align:center;}
-  #brakeWrap .lbl{font-size:9px;letter-spacing:2px;color:#6f8fc0;margin-bottom:4px;}
-  #brake{writing-mode:vertical-lr;direction:rtl;width:26px;height:110px;accent-color:#ff9b6a;}
+  #brakeWrap{position:fixed;left:12px;top:26%;z-index:5;text-align:center;}
+  #brakeWrap .lbl{font-size:9px;letter-spacing:2px;color:#4f9de0;margin-bottom:4px;}
+  #brake{writing-mode:vertical-lr;direction:rtl;width:26px;height:110px;accent-color:#2e7bd6;}
 
   #warn{position:fixed;top:8px;left:0;right:0;text-align:center;z-index:6;pointer-events:none;}
   #stallW{font-weight:700;letter-spacing:3px;font-size:14px;color:#ff3b3b;text-shadow:0 0 12px #ff3b3b;opacity:0;}
@@ -104,7 +105,9 @@
   <div class="panel">
     <b>Physics:</b> genuine six-degree-of-freedom rigid body. Forces &amp; moments from a lift curve and drag polar fitted to published ASK-21 data (35 kn stall, 34:1 at 49 kn, 0.64 m/s min sink). Spins emerge from asymmetric wing stall, not scripting.<br><br>
     <b>Map:</b> Dunstable Downs — the Chiltern escarpment runs NE–SW and faces NW. With a NW wind you get ridge lift along the slope; thermals drift downwind. London GC sits at the foot.<br><br>
-    <b>Controls:</b> the iPad <b>IS the stick</b> — tilt it left/right to roll, tilt fore/aft for pitch. Tap SET NEUTRAL to zero the stick to however you're holding it. Right pad = rudder ("feet"). PITCH TRIM slider sets the hands-level pitch reference (roll is never trimmed). Side slider = airbrakes. Keep the yaw string centred.<br><br>
+    <b>Controls (iPad):</b> the iPad <b>IS the stick</b> — tilt to roll &amp; pitch (tap SET NEUTRAL to zero). Pedals bottom-centre are your feet: push one, it holds. Left wall: <b>blue airbrake</b> and <b>green trim</b>, like the real front cockpit.<br>
+    <b>Controls (Mac):</b> hold the mouse button and move = <b>stick (right hand)</b>; release and it springs back to trim. Keyboard: <b>A/D</b> rudder (holds), <b>S</b> centre rudder, <b>↑/↓</b> airbrake, <b>T/G</b> trim, <b>E</b> engine.<br><br>
+    <b>View:</b> you fly from the <b>front seat</b> (P1, the student's seat) — canopy frame around you, glare shield below. CHASE VIEW shows the whole aircraft with moving surfaces.<br><br>
     <b>Honest seams:</b> mass/area/polar/stall are from real data; the stability derivatives &amp; inertias are textbook estimates tuned to the POH's docile handling. No g-feel or buffet. Mental rehearsal only — your London GC instructors are the authority.<br><br>
     <span style="color:#7d8896;font-size:11px">3D model: "ASK 21 Mi" by helijah — CC Attribution (sketchfab.com/helijah)</span>
   </div>
@@ -432,7 +435,7 @@ function initThree(){
   scene=new THREE.Scene();
   scene.background=new THREE.Color(0x7fb0d8);
   scene.fog=new THREE.Fog(0xcfe0ee,3000,12000);
-  camCockpit=new THREE.PerspectiveCamera(62,innerWidth/innerHeight,0.5,20000);
+  camCockpit=new THREE.PerspectiveCamera(72,innerWidth/innerHeight,0.05,20000);
   camChase=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.5,20000);
   scene.add(new THREE.HemisphereLight(0xbcd8ff,0x50663a,0.9));
   sunL=new THREE.DirectionalLight(0xfff2d8,0.9); sunL.position.set(2000,3000,-1500); scene.add(sunL);
@@ -480,12 +483,16 @@ async function loadGliderModel(){
     for(const t of tris){const v=vs[t];for(let k=0;k<3;k++){if(v[k]<mn[k])mn[k]=v[k];if(v[k]>mx[k])mx[k]=v[k];}}
     return {mn,mx,c:[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2]};
   }
-  const staticTris=[];
+  const staticTris=[], glassTris=[];
   const animKeys=Object.keys(ANIM);
   for(const name in objs){
     const tris=objs[name]; if(!tris.length) continue;
     const key=animKeys.find(k=>name.startsWith(k));
-    if(!key){ staticTris.push(...tris); continue; }
+    if(!key){
+      if(name.startsWith('vitre')) glassTris.push(...tris);  // canopy & instrument glass
+      else staticTris.push(...tris);
+      continue;
+    }
     const bb=bbox(tris), geo=makeGeo(tris);
     let hinge;
     if(key==='direction'){ hinge=[bb.mn[0], bb.c[1], bb.c[2]]; }         // rudder: vertical hinge at forward edge
@@ -498,6 +505,15 @@ async function loadGliderModel(){
     ANIM[key]=pivot;
   }
   if(staticTris.length) modelRoot.add(new THREE.Mesh(makeGeo(staticTris),mat));
+  if(glassTris.length){
+    const gmat=new THREE.MeshStandardMaterial({color:0xd8ecff,transparent:true,opacity:0.16,
+      roughness:0.08,metalness:0.0,side:THREE.DoubleSide,depthWrite:false});
+    modelRoot.add(new THREE.Mesh(makeGeo(glassTris),gmat));
+  }
+  // FRONT SEAT (student, P1): eye behind the front stick, under the front canopy
+  camCockpit.position.set(-2.85,-0.15,0);
+  camCockpit.rotation.set(0,Math.PI/2,0); // look along -X (out the nose)
+  modelRoot.add(camCockpit);
   // engine starts retracted (hidden) — this is the self-launching Mi
   if(ANIM.moteur)ANIM.moteur.visible=false;
   if(ANIM.helice)ANIM.helice.visible=false;
@@ -592,7 +608,7 @@ function updateThree(){
   gliderGrp.position.copy(p);
   const m=new THREE.Matrix4().makeBasis(rgt,up,fwd.clone().negate());
   gliderGrp.quaternion.setFromRotationMatrix(m);
-  gliderGrp.visible=(viewMode==='chase');
+  gliderGrp.visible=true; // in cockpit view you're inside it — canopy frame and all
   if(viewMode==='chase'){
     // smoothed camera behind & above, looking at the glider
     const want=p.clone().add(fwd.clone().multiplyScalar(-26)).add(new THREE.Vector3(0,8,0));
@@ -602,9 +618,12 @@ function updateThree(){
     camChase.lookAt(p);
     renderer.render(scene,camChase);
   } else {
-    camCockpit.position.copy(p).add(up.clone().multiplyScalar(0.35));
-    camCockpit.quaternion.setFromRotationMatrix(m);
-    renderer.render(scene,camCockpit);
+    if(camCockpit.parent){ renderer.render(scene,camCockpit); } // parented in the front seat
+    else { // fallback model: place camera manually at glider position
+      camCockpit.position.copy(p).add(up.clone().multiplyScalar(0.35));
+      camCockpit.quaternion.setFromRotationMatrix(m);
+      renderer.render(scene,camCockpit);
+    }
   }
 }
 function threeResize(){ if(!renderer)return;
@@ -645,25 +664,22 @@ function draw(){
   const eul=quatToEuler(S.q); const roll=eul[0],pitch=eul[1],yaw=eul[2];
 
   if(viewMode==='cockpit'){
-    const horizonH = H*0.62;
-    // cockpit coaming (opaque dashboard)
-    const coam=ctx.createLinearGradient(0,horizonH-20,0,H);
-    coam.addColorStop(0,'#23262b'); coam.addColorStop(0.12,'#16191d'); coam.addColorStop(1,'#0d0f12');
-    ctx.fillStyle=coam; ctx.fillRect(0,horizonH-18,W,H-horizonH+18);
-    ctx.strokeStyle='#3a3f46'; ctx.lineWidth=3; ctx.beginPath();
-    ctx.moveTo(0,horizonH-6); ctx.quadraticCurveTo(W*0.5,horizonH-26,W,horizonH-6); ctx.stroke();
+    // translucent instrument strip — the 3D canopy & panel show through above it
+    ctx.fillStyle='rgba(10,12,16,0.45)'; ctx.fillRect(0,H*0.76,W,H*0.24);
+    ctx.strokeStyle='rgba(70,80,95,0.7)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(0,H*0.76); ctx.lineTo(W,H*0.76); ctx.stroke();
 
-    const gR=Math.min(W*0.085, (H-horizonH)*0.32);
-    const rowY=horizonH + (H-horizonH)*0.42;
-    const aR=gR*1.15;
-    asiGauge(W*0.29, rowY, gR);
-    attitudeGauge(W*0.40, rowY, aR, roll, pitch);
-    varioGauge(W*0.51, rowY, gR);
-    altGauge(W*0.62, rowY, gR);
-    compassGauge(W*0.73, rowY, gR, yaw);
-    slipStrip(W*0.40, rowY+aR+10, aR);
-    gAoaGauge(W*0.51, rowY+gR+gR*0.5, gR*0.66);
-    drawYawString(0,0,W,horizonH);
+    const gR=Math.min(W*0.055, H*0.075);
+    const rowY=H*0.86, aR=gR*1.15;
+    // split left/right of the centre pedals: ASI · AI · VARIO   [pedals]   ALT · COMPASS · g/AoA
+    asiGauge(W*0.23, rowY, gR);
+    attitudeGauge(W*0.32, rowY, aR, roll, pitch);
+    varioGauge(W*0.41, rowY, gR);
+    altGauge(W*0.59, rowY, gR);
+    compassGauge(W*0.68, rowY, gR, yaw);
+    gAoaGauge(W*0.77, rowY, gR*0.8);
+    slipStrip(W*0.32, rowY+aR+8, aR);
+    drawYawString(0,0,W,H*0.6);
   } else {
     // chase view: minimal digital HUD, no panel
     ctx.fillStyle='rgba(8,14,28,0.65)'; ctx.fillRect(10,50,190,86);
@@ -1026,6 +1042,43 @@ bindPedal('pedalL',-1); // left pedal -> left rudder
 bindPedal('pedalR', 1); // right pedal -> right rudder
 document.getElementById('rudCenter').onclick=()=>{ ctrl.dr=0; setPedalVisual(); };
 setPedalVisual();
+
+/* ---- Mac controls: MOUSE = STICK (right hand, always), KEYBOARD = rudder & levers ---- */
+// hold the left mouse button and move: offset from where you pressed = stick deflection.
+// release = stick springs back to trim (like letting go of a real stick).
+let mStick=false, mOrigin=null;
+function uiTarget(e){ const t=e.target; return t.closest && (t.closest('button,input,#menu,#tiltBox,#rudderPedals,#brakeWrap,#trimWrap')); }
+window.addEventListener('mousedown',e=>{
+  if(tiltOn||uiTarget(e))return;
+  mStick=true; mOrigin={x:e.clientX,y:e.clientY};
+});
+window.addEventListener('mousemove',e=>{
+  if(!mStick||tiltOn)return;
+  const span=Math.min(W,H)*0.28;
+  ctrl.da=Math.max(-1,Math.min(1,(e.clientX-mOrigin.x)/span));
+  ctrl.de=Math.max(-1,Math.min(1,(e.clientY-mOrigin.y)/span + pitchTrim));
+  const dot=document.getElementById('tiltDot');
+  if(dot){dot.style.left=(60+ctrl.da*60-15)+'px';dot.style.top=(60+Math.max(-1,Math.min(1,ctrl.de))*60-15)+'px';}
+});
+window.addEventListener('mouseup',()=>{
+  if(!mStick)return; mStick=false;
+  if(!tiltOn){ctrl.da=0;ctrl.de=pitchTrim;
+    const dot=document.getElementById('tiltDot');
+    if(dot){dot.style.left='45px';dot.style.top='45px';dot.style.left=(60-15)+'px';dot.style.top=(60+pitchTrim*60-15)+'px';}}
+});
+// keyboard: A/← rudder left · D/→ rudder right (holds, like pedals) · S centre rudder
+//           ↑/↓ airbrake close/open · E engine toggle · T/G trim nose-dn/up
+window.addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k==='a'||k==='A'||k==='ArrowLeft'){ ctrl.dr=Math.max(-1,ctrl.dr-0.15); setPedalVisual(); e.preventDefault(); }
+  else if(k==='d'||k==='D'||k==='ArrowRight'){ ctrl.dr=Math.min(1,ctrl.dr+0.15); setPedalVisual(); e.preventDefault(); }
+  else if(k==='s'||k==='S'){ ctrl.dr=0; setPedalVisual(); }
+  else if(k==='ArrowUp'){ S.brake=Math.max(0,(S.brake||0)-12); document.getElementById('brake').value=S.brake; e.preventDefault(); }
+  else if(k==='ArrowDown'){ S.brake=Math.min(100,(S.brake||0)+12); document.getElementById('brake').value=S.brake; e.preventDefault(); }
+  else if(k==='e'||k==='E'){ document.getElementById('engBtn').click(); }
+  else if(k==='t'||k==='T'){ pitchTrim=Math.max(-0.6,pitchTrim-0.05); document.getElementById('trim').value=pitchTrim/0.6*100; }
+  else if(k==='g'||k==='G'){ pitchTrim=Math.min(0.6,pitchTrim+0.05); document.getElementById('trim').value=pitchTrim/0.6*100; }
+});
 document.getElementById('brake').addEventListener('input',e=>{S.brake=+e.target.value;});
 
 /* ---------------- loop ---------------- */
