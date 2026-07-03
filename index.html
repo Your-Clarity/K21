@@ -487,6 +487,7 @@ async function loadGliderModel(){
   const animKeys=Object.keys(ANIM);
   for(const name in objs){
     const tris=objs[name]; if(!tris.length) continue;
+    if(name.startsWith('string')||name.startsWith('tape')) continue; // static modeled yaw string: replaced by our animated 2D one
     const key=animKeys.find(k=>name.startsWith(k));
     if(!key){
       if(name.startsWith('vitre')) glassTris.push(...tris);  // canopy & instrument glass
@@ -957,6 +958,12 @@ function bindPad(padId,knobId,onMove,xOnly){
 // stick: drag down (ny>0) = pull = nose up (de>0). roll: nx>0 = roll right (da>0)
 /* ---- TILT STICK: device orientation drives roll (beta/gamma) & pitch ---- */
 let tiltZero={beta:0,gamma:0}, tiltOn=false, pitchTrim=0;
+// mouse wheel = pitch trim (in addition to T/G keys)
+window.addEventListener('wheel',e=>{
+  pitchTrim=Math.max(-0.6,Math.min(0.6,pitchTrim - e.deltaY*0.0006));
+  const tr=document.getElementById('trim'); if(tr)tr.value=Math.round(pitchTrim/0.6*100);
+  if(!tiltOn && !mStick){ ctrl.de=pitchTrim; }
+},{passive:true});
 // beta = front-back tilt (deg), gamma = left-right tilt (deg) in portrait;
 // we read both and map: left-right tilt -> roll, front-back tilt -> pitch.
 let lastTilt={b:0,g:0};
@@ -964,6 +971,7 @@ function onOrient(e){
   if(e.beta===null) return;
   tiltOn=true;
   lastTilt.b=e.beta; lastTilt.g=e.gamma;
+  if(mStick) return; // mouse (right hand on the stick) overrides tilt while dragging
   // deflection from the calibrated neutral, scaled. ~25deg tilt = full deflection.
   const dRoll = (e.gamma - tiltZero.gamma)/25;     // left-right tilt -> roll
   let dPitch = (e.beta  - tiltZero.beta)/25;       // front-back tilt -> pitch (raw)
