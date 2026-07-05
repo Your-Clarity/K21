@@ -70,6 +70,8 @@
   button:active{transform:scale(0.96);}
   .scn{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;}
   .scn button{background:linear-gradient(135deg,#16263f,#1d3556);color:#cfe3ff;box-shadow:none;border:2px solid #2a4870;padding:10px 16px;font-size:12px;}
+  .windrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;max-width:560px;color:#9fb6da;font-size:11px;letter-spacing:1px;}
+  .windrow input[type=range]{width:110px;accent-color:#39d0ff;}
   #resetBtn{position:fixed;top:8px;right:12px;z-index:7;padding:7px 13px;font-size:11px;background:rgba(14,24,44,0.8);color:#9fb6da;border:2px solid #1c3354;box-shadow:none;}
   #lab{position:fixed;top:8px;left:12px;z-index:7;font-size:11px;letter-spacing:1px;color:#7f9fce;}
 </style>
@@ -106,7 +108,7 @@
     <b>Physics:</b> genuine six-degree-of-freedom rigid body. Forces &amp; moments from a lift curve and drag polar fitted to published ASK-21 data (35 kn stall, 34:1 at 49 kn, 0.64 m/s min sink). Spins emerge from asymmetric wing stall, not scripting.<br><br>
     <b>Map:</b> Dunstable Downs — the Chiltern escarpment runs NE–SW and faces NW. With a NW wind you get ridge lift along the slope; thermals drift downwind. London GC sits at the foot.<br><br>
     <b>Controls (iPad):</b> the iPad <b>IS the stick</b> — tilt to roll &amp; pitch (tap SET NEUTRAL to zero). Pedals bottom-centre are your feet: push one, it holds. Left wall: <b>blue airbrake</b> and <b>green trim</b>, like the real front cockpit.<br>
-    <b>Controls (Mac):</b> hold the mouse button and move = <b>stick (right hand)</b>; release and it springs back to trim. Keyboard: <b>A/D</b> rudder (holds), <b>S</b> centre rudder, <b>↑/↓</b> airbrake, <b>T/G</b> trim, <b>E</b> engine.<br><br>
+    <b>Controls (Mac):</b> hold the mouse button and move = <b>stick (right hand)</b>, release springs back to trim. Or keys: <b>arrows</b> = stick (hold longer → more deflection; ← → roll, ↑ push / ↓ pull). <b>Z / X</b> = rudder pedals (linked, they hold). <b>C</b> centre rudder. <b>[ ]</b> airbrake. <b>- =</b> trim. <b>E</b> engine, <b>V</b> view.<br><br>
     <b>View:</b> you fly from the <b>front seat</b> (P1, the student's seat) — canopy frame around you, glare shield below. CHASE VIEW shows the whole aircraft with moving surfaces.<br><br>
     <b>Honest seams:</b> mass/area/polar/stall are from real data; the stability derivatives &amp; inertias are textbook estimates tuned to the POH's docile handling. No g-feel or buffet. Mental rehearsal only — your London GC instructors are the authority.<br><br>
     <span style="color:#7d8896;font-size:11px">3D model: "ASK 21 Mi" by helijah — CC Attribution (sketchfab.com/helijah)</span>
@@ -117,6 +119,16 @@
     <button data-scn="thermal">THERMAL</button>
     <button data-scn="stall">STALL DRILL</button>
     <button data-scn="spin">SPIN ENTRY</button>
+    <button data-scn="approach">CIRCUIT &amp; LANDING</button>
+  </div>
+  <div class="tag" style="margin-top:6px">WIND</div>
+  <div class="windrow">
+    <label>DIR <span id="wdV">315</span>°</label>
+    <input type="range" id="wdir" min="0" max="359" value="315">
+    <label>SPD <span id="wsV">14</span> kt</label>
+    <input type="range" id="wspd" min="0" max="35" value="14">
+    <label>GUST <span id="wgV">4</span> kt</label>
+    <input type="range" id="wgust" min="0" max="15" value="4">
   </div>
   <button id="startBtn">START FLYING</button>
 </div>
@@ -202,6 +214,21 @@ const ENV={
   ridgeTop: 200,             // m AMSL approx escarpment height above field
   thermals: []
 };
+// user-adjustable wind (persists across flights); gust/gradient add realism for landing
+const WIND={ dirDeg:315, spd:7.0, gust:2.0, gradient:true };
+let _gustPhase=0;
+function windAt(aglM,dt){
+  // returns {N,E} air-mass velocity (m/s) with a boundary-layer gradient + gusts.
+  _gustPhase+=dt*1.7;
+  let spd=ENV.windSpd;
+  if(WIND.gradient){ // log-ish profile: wind ~0 at ground, full by ~150 m
+    const f=Math.max(0.08, Math.min(1, Math.log(1+Math.max(0,aglM)/2)/Math.log(1+150/2)));
+    spd*=f;
+  }
+  spd += Math.sin(_gustPhase)*Math.cos(_gustPhase*0.6)*WIND.gust; // gentle gust variation
+  // air moves TOWARD windDir+180
+  return { N:-Math.cos(ENV.windDir)*spd, E:-Math.sin(ENV.windDir)*spd };
+}
 function spawnThermals(n){ENV.thermals=[];for(let i=0;i<n;i++){
   ENV.thermals.push({x:(Math.random()*2-1)*5000, y:(Math.random()*2-1)*5000, r:280+Math.random()*220, w:2.5+Math.random()*3.5});}}
 // ridge lift: component of wind hitting the slope, strongest low & near the ridge line
@@ -265,34 +292,41 @@ function terrainAlt(posN,posE){ // metres ABOVE valley floor of ground under a p
 let scenario='ridge';
 function setup(s){
   scenario=s;
-  // trimmed glide: best-glide ~26 m/s, glide angle ~1.7deg down, trim AoA ~5deg
   const spd=26;
-  const trimAoA=5*Math.PI/180;       // body sits at this AoA in the airflow
-  const glideAngle=1.7*Math.PI/180;  // flight path descends this much
-  const pitch=trimAoA-glideAngle;    // body pitch above horizon (slightly nose-up of path)
-  const hdg=45*Math.PI/180;          // NE along ridge
+  const trimAoA=5*Math.PI/180;
+  const glideAngle=1.7*Math.PI/180;
+  const pitch=trimAoA-glideAngle;
+  let hdg=45*Math.PI/180;
+  // wind from the UI (persist between flights); default NW
+  ENV.windDir=(WIND.dirDeg)*Math.PI/180; ENV.windSpd=WIND.spd;
+  // approach: line up on final into wind toward the LGC threshold (origin)
+  let start={N:0,E:-300};
+  if(s==='approach'){
+    // land into wind: final heading = wind direction (flying toward where wind comes from)
+    hdg=ENV.windDir;
+    // start ~1.5 km out on final, 700 ft up, on a 5–6° approach slope
+    const back=1500;
+    start={N:-Math.cos(hdg)*back, E:-Math.sin(hdg)*back};
+  }
   const e=quatFromEuler(0,pitch,hdg);
-  S={ posN:0, posE:-300, posD:-600,
+  S={ posN:start.N, posE:start.E, posD:-600,
       vN:0,vE:0,vD:0, q:e, p:0,q_:0,r:0,
       V:spd, alpha:trimAoA, beta:0, gLoad:1, vario:0, alive:true, brake:0,
-      spinning:false };
-  // velocity along the descending flight path (not the body axis)
+      spinning:false, onGround:false, rolledOut:false, landing:null,
+      tdSink:0,tdSpeed:0,tdGS:0,tdMiss:0 };
   const fpN=Math.cos(glideAngle)*Math.cos(hdg);
   const fpE=Math.cos(glideAngle)*Math.sin(hdg);
-  const fpD=Math.sin(glideAngle); // descending = +D
+  const fpD=Math.sin(glideAngle);
   S.vN=fpN*spd; S.vE=fpE*spd; S.vD=fpD*spd;
-  // small nose-up trim so it holds the glide hands-off-ish
   ctrl={de:0,da:0,dr:0};
-  ENV.windDir=315*Math.PI/180; ENV.windSpd=7;
-  if(s==='ridge'){ ENV.windSpd=8; S.posE=-200; spawnThermals(2);}
-  if(s==='thermal'){ ENV.windSpd=3; spawnThermals(7);}
-  if(s==='stall'){ spawnThermals(0); }
-  if(s==='spin'){ spawnThermals(0); }
-  // ALWAYS spawn well above the actual ground beneath us (real terrain can be high)
+  if(s==='ridge'){ S.posE=-200; spawnThermals(2);}
+  else if(s==='thermal'){ spawnThermals(7);}
+  else if(s==='approach'){ spawnThermals(0); }
+  else { spawnThermals(0); }
   const groundHere=terrainAlt(S.posN,S.posE);
-  const wantUp = {ridge:260, thermal:500, stall:900, spin:1100}[s] || 500;
-  S.posD = -(groundHere + wantUp);   // posD is down; altitude above ground = wantUp
-  document.getElementById('lab').textContent={ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[s];
+  const wantUp = {ridge:260, thermal:500, stall:900, spin:1100, approach:210}[s] || 500;
+  S.posD = -(groundHere + wantUp);
+  document.getElementById('lab').textContent={ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY',approach:'CIRCUIT & LANDING'}[s];
 }
 
 /* ---------------- controls ---------------- */
@@ -310,10 +344,11 @@ function clCurve(a){ // a in rad
 
 /* ---------------- 6-DOF integration ---------------- */
 function physics(dt){
-  if(!S.alive) return;
-  // wind blows FROM windDir, so the air mass moves TOWARD windDir+180.
-  // air velocity vector (world NED):
-  const wN=-Math.cos(ENV.windDir)*ENV.windSpd, wE=-Math.sin(ENV.windDir)*ENV.windSpd;
+  if(!S.alive && !S.onGround) return;
+  // wind with boundary-layer gradient + gusts (weaker near the ground)
+  const aglW=(-S.posD)-terrainAlt(S.posN,S.posE);
+  const wnd=windAt(aglW,dt);
+  const wN=wnd.N, wE=wnd.E;
   // airflow over the glider = ground velocity - air-mass velocity
   const relN=S.vN - wN, relE=S.vE - wE, relD=S.vD;
   const vb=w2b(S.q,[relN,relE,relD]);
@@ -328,7 +363,11 @@ function physics(dt){
   let CL=clCurve(alpha);
   const brakeCD=0.06*(S.brake/100); // [E] airbrake parasite add
   const hiSpeed=0.00004*Math.max(0,V-40)*Math.max(0,V-40); // [E] high-speed drag rise -> dive bottoms near Vne
-  let CD=AC.CD0+brakeCD+hiSpeed + CL*CL/(Math.PI*AC.AR*AC.e);
+  // ground effect: within ~1 span of the ground, induced drag falls (glider floats)
+  const agl=(-S.posD)-terrainAlt(S.posN,S.posE);
+  const hb=Math.max(0,agl)/AC.b;                 // height in spans
+  const geFactor=(hb<1.0)?(0.5+0.5*hb):1.0;      // [E] induced drag x0.5 on the deck -> x1 at 1 span
+  let CD=AC.CD0+brakeCD+hiSpeed + (CL*CL/(Math.PI*AC.AR*AC.e))*geFactor;
   const CY=AC.CYb*beta;
 
   // --- asymmetric wing stall -> spin autorotation (emergent) ---
@@ -398,9 +437,37 @@ function physics(dt){
 
   S.spinning = stalled && Math.abs(S.p)>0.6;
 
-  // ground
+  // ground: real touchdown, rollout, and scoring (not a kill-plane)
   const grd=terrainAlt(S.posN,S.posE);
-  if(altUp<=grd){ S.posD=-grd; S.alive=false; }
+  const aglNow=(-S.posD)-grd;
+  const eulg=quatToEuler(S.q);
+  if(aglNow<=0.6 && S.alive && !S.onGround){
+    // TOUCHDOWN moment — evaluate
+    const sink=Math.max(0,S.vD);          // m/s downward at contact
+    const gs=Math.hypot(S.vN,S.vE);       // ground speed
+    const bank=Math.abs(eulg[0]);
+    S.onGround=true; S.posD=-grd;
+    S.tdSink=sink; S.tdSpeed=S.V/KT; S.tdGS=gs;
+    // distance from aim point (runway threshold at origin, along ridge heading)
+    S.tdMiss=Math.hypot(S.posN,S.posE);
+    if(bank>0.35 || sink>2.5){ S.alive=false; S.landing='HEAVY / WING DROP'; }
+    else if(sink>1.3){ S.landing='FIRM'; }
+    else if(sink>0.6){ S.landing='GOOD'; }
+    else { S.landing='GREASER'; }
+  }
+  if(S.onGround && S.alive){
+    // ROLLOUT: stick to ground, bleed speed with rolling friction + airbrake drag
+    S.posD=-grd; S.vD=0;
+    const gs=Math.hypot(S.vN,S.vE);
+    if(gs>0.2){
+      const decel=(1.6 + 3.0*(S.brake/100))/Math.max(gs,0.2); // [E] friction + brakes
+      const f=Math.max(0,1-decel*dt);
+      S.vN*=f; S.vE*=f;
+    } else { S.vN=0; S.vE=0; S.rolledOut=true; }
+    // keep it level on the ground
+    S.p*=0.9; S.q_*=0.9; S.r*=0.9;
+  }
+  if(aglNow<-0.5){ S.alive=false; S.landing=S.landing||'GROUND IMPACT'; } // flew into rising terrain
 }
 
 /* ---------------- audio vario + warnings ---------------- */
@@ -578,18 +645,42 @@ function buildTerrainMesh(){
   const mat=SAT.tex?new THREE.MeshLambertMaterial({map:SAT.tex}):new THREE.MeshLambertMaterial({vertexColors:true});
   SAT.on=!!SAT.tex;
   terrainMesh=new THREE.Mesh(geo,mat); scene.add(terrainMesh);
-  // simple runway strip at LGC (origin), aligned with the ridge (hidden under real imagery)
-  if(!SAT.tex){
-    const run=new THREE.Mesh(new THREE.PlaneGeometry(400,26),new THREE.MeshLambertMaterial({color:0x9aa58f}));
-    run.rotation.x=-Math.PI/2; run.rotation.z=ENV.ridgeHeading;
-    run.position.set(0,terrainAlt(0,0)+0.4,0);
-    terrainMesh.add(run);
+  // ---- landing field at LGC: grass strip + threshold + aim point, aligned INTO wind ----
+  const g0=terrainAlt(0,0);
+  const landHdg=ENV.windDir;                       // you land toward where the wind comes from
+  const fieldGrp=new THREE.Group(); fieldGrp.position.set(0,g0+0.3,0); scene.add(fieldGrp);
+  // grass landing strip (always drawn, subtle so it works over imagery too)
+  const strip=new THREE.Mesh(new THREE.PlaneGeometry(500,30),
+    new THREE.MeshLambertMaterial({color:0x6f8f4a,transparent:true,opacity:0.55}));
+  strip.rotation.x=-Math.PI/2; strip.rotation.z=-landHdg; fieldGrp.add(strip);
+  // threshold bar (white) at the origin, across the strip
+  const thr=new THREE.Mesh(new THREE.PlaneGeometry(30,3),new THREE.MeshBasicMaterial({color:0xffffff}));
+  thr.rotation.x=-Math.PI/2; thr.rotation.z=-landHdg; thr.position.set(0,0.05,0); fieldGrp.add(thr);
+  // aim point: two white blocks ~150 m in from threshold (like real touchdown markers)
+  for(const sgn of [-1,1]){
+    const aim=new THREE.Mesh(new THREE.PlaneGeometry(2,8),new THREE.MeshBasicMaterial({color:0xffffff}));
+    aim.rotation.x=-Math.PI/2; aim.rotation.z=-landHdg;
+    aim.position.set(Math.cos(landHdg)*150 + sgn*Math.sin(landHdg)*5,
+                     0.06,
+                    -Math.sin(landHdg)*150 + sgn*Math.cos(landHdg)*5);
+    fieldGrp.add(aim);
   }
+  AIM.N=Math.cos(landHdg)*150; AIM.E=Math.sin(landHdg)*150; AIM.hdg=landHdg;
+  // windsock pole near the threshold
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,6,6),new THREE.MeshLambertMaterial({color:0xdddddd}));
+  pole.position.set(-18,3,-18); fieldGrp.add(pole);
+  windSock=new THREE.Mesh(new THREE.ConeGeometry(0.9,4,8,1,true),
+    new THREE.MeshLambertMaterial({color:0xff7733,side:THREE.DoubleSide}));
+  windSock.rotation.z=Math.PI/2; windSock.position.set(-18,5.5,-18); fieldGrp.add(windSock);
 }
+let AIM={N:150,E:0,hdg:0}, windSock=null;
 /* per-frame: place glider + cameras from flight state */
 const _sm={x:0,y:0,z:0,init:false};
 function updateThree(){
   if(!renderer) return;
+  // windsock points downwind (cone opens toward where wind blows TO)
+  if(windSock){ windSock.rotation.y = -ENV.windDir + Math.PI/2;
+    const droop=1-Math.min(1,ENV.windSpd/8); windSock.rotation.x=droop*0.9; }
   // --- animate control surfaces from the pilot's actual inputs ---
   // (hinge lines estimated from part geometry: angles are visual approximations)
   if(ANIM.aileronD) ANIM.aileronD.rotation.z =  0.35*ctrl.da;   // stick right -> right aileron up
@@ -693,11 +784,35 @@ function draw(){
 
   miniMap(yaw);
   ctx.fillStyle='#eaf4ff';ctx.font='12px Chakra Petch';ctx.textAlign='left';
-  ctx.fillText(({ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY'}[scenario])||'',14,22);
+  ctx.fillText(({ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY',approach:'CIRCUIT & LANDING'}[scenario])||'',14,22);
   if(HEIGHT){ctx.fillStyle='#7d8896';ctx.font='10px Share Tech Mono';ctx.fillText('real terrain · Dunstable',14,38);}
+  // wind + height-above-ground readout (top-left)
+  const aglFt=Math.max(0,((-S.posD)-terrainAlt(S.posN,S.posE)))*3.281;
+  ctx.fillStyle='#9fb6da';ctx.font='11px Share Tech Mono';
+  ctx.fillText('WIND '+String(Math.round(WIND.dirDeg)).padStart(3,'0')+'° / '+Math.round(WIND.spd/KT)+'kt',14,54);
+  ctx.fillText('AGL '+Math.round(aglFt)+' ft',14,70);
+  if(scenario==='approach'){
+    const dMiss=Math.hypot(S.posN-AIM.N,S.posE-AIM.E);
+    ctx.fillText('AIM '+Math.round(dMiss)+' m',14,86);
+  }
   if(SAT.on){ctx.fillStyle='#7d8896';ctx.font='9px Share Tech Mono';ctx.textAlign='right';ctx.fillText('Imagery © Esri, Maxar, Earthstar Geographics',W-10,H-8);ctx.textAlign='left';}
-  if(!S.alive) crashed();
+  if(S.onGround && S.landing) landingCard();
+  else if(!S.alive) crashed();
   warnings();
+}
+function landingCard(){
+  ctx.fillStyle='rgba(6,12,24,0.82)';ctx.fillRect(W/2-190,H*0.28,380,220);
+  ctx.strokeStyle='#2a4870';ctx.lineWidth=2;ctx.strokeRect(W/2-190,H*0.28,380,220);
+  ctx.textAlign='center';
+  const col=S.landing==='GREASER'?'#7af0c0':S.landing==='GOOD'?'#9fe08a':S.landing==='FIRM'?'#ffd23b':'#ff6a6a';
+  ctx.fillStyle=col;ctx.font='700 30px Chakra Petch';ctx.fillText(S.landing,W/2,H*0.28+52);
+  ctx.fillStyle='#cfe3ff';ctx.font='15px Share Tech Mono';
+  ctx.fillText('touchdown '+S.tdSpeed.toFixed(0)+' kt',W/2,H*0.28+92);
+  ctx.fillText('sink '+S.tdSink.toFixed(2)+' m/s',W/2,H*0.28+116);
+  ctx.fillText('from aim point '+Math.round(S.tdMiss)+' m',W/2,H*0.28+140);
+  ctx.fillStyle=S.rolledOut?'#7af0c0':'#9fb6da';
+  ctx.fillText(S.rolledOut?'stopped — tap RESET':'rolling…',W/2,H*0.28+176);
+  ctx.textAlign='left';
 }
 
 /* ---- 3D out-the-window synthetic terrain view ---- */
@@ -995,7 +1110,7 @@ async function enableMotion(){
   }catch(e){ return false; }
 }
 document.getElementById('calibBtn').onclick=()=>{ calibrate(); beep(600,0.06,'sine',0.12); };
-document.getElementById('trim').addEventListener('input',e=>{ pitchTrim=(+e.target.value)/100*0.6; });
+document.getElementById('trim').addEventListener('input',e=>{ pitchTrim=(+e.target.value)/100*0.6; if(!mStick&&!tiltOn&&!KEY['arrowup']&&!KEY['arrowdown']) ctrl.de=pitchTrim; });
 
 // fallback: if motion never fires (desktop / denied), allow dragging in the tilt box as the stick
 (function tiltFallback(){
@@ -1074,19 +1189,54 @@ window.addEventListener('mouseup',()=>{
     const dot=document.getElementById('tiltDot');
     if(dot){dot.style.left='45px';dot.style.top='45px';dot.style.left=(60-15)+'px';dot.style.top=(60+pitchTrim*60-15)+'px';}}
 });
-// keyboard: A/← rudder left · D/→ rudder right (holds, like pedals) · S centre rudder
-//           ↑/↓ airbrake close/open · E engine toggle · T/G trim nose-dn/up
+/* ---- KEYBOARD: progressive, held-key controls (the longer you hold, the more it moves) ----
+   Arrows = STICK (right hand): ←/→ roll, ↑ push (nose down), ↓ pull (nose up).
+     Ramps smoothly toward full while held; on release, roll re-centres and pitch
+     eases back toward trim (the aircraft's own stability finishes the job).
+   Z / X = RUDDER pedals: Z=left, X=right. Linked — pushing one drives the other the
+     opposite way — and it HOLDS where you leave it (like real pedals). C = centre.
+   [ / ] = airbrake in/out (held, progressive).  - / = = pitch trim.  E engine, V view. */
+const KEY={};
 window.addEventListener('keydown',e=>{
-  const k=e.key;
-  if(k==='a'||k==='A'||k==='ArrowLeft'){ ctrl.dr=Math.max(-1,ctrl.dr-0.15); setPedalVisual(); e.preventDefault(); }
-  else if(k==='d'||k==='D'||k==='ArrowRight'){ ctrl.dr=Math.min(1,ctrl.dr+0.15); setPedalVisual(); e.preventDefault(); }
-  else if(k==='s'||k==='S'){ ctrl.dr=0; setPedalVisual(); }
-  else if(k==='ArrowUp'){ S.brake=Math.max(0,(S.brake||0)-12); document.getElementById('brake').value=S.brake; e.preventDefault(); }
-  else if(k==='ArrowDown'){ S.brake=Math.min(100,(S.brake||0)+12); document.getElementById('brake').value=S.brake; e.preventDefault(); }
-  else if(k==='e'||k==='E'){ document.getElementById('engBtn').click(); }
-  else if(k==='t'||k==='T'){ pitchTrim=Math.max(-0.6,pitchTrim-0.05); document.getElementById('trim').value=pitchTrim/0.6*100; }
-  else if(k==='g'||k==='G'){ pitchTrim=Math.min(0.6,pitchTrim+0.05); document.getElementById('trim').value=pitchTrim/0.6*100; }
+  const k=e.key.toLowerCase(); KEY[k]=true;
+  if(['arrowleft','arrowright','arrowup','arrowdown',' '].includes(k)) e.preventDefault();
+  if(k==='c'){ ctrl.dr=0; setPedalVisual(); }
+  if(k==='e'){ document.getElementById('engBtn').click(); }
+  if(k==='v'){ document.getElementById('viewBtn').click(); }
 });
+window.addEventListener('keyup',e=>{ KEY[e.key.toLowerCase()]=false; });
+function syncTiltDot(){ const dot=document.getElementById('tiltDot');
+  if(dot){ dot.style.left=(60+ctrl.da*60-15)+'px'; dot.style.top=(60+(ctrl.de)*60-15)+'px'; } }
+function applyKeys(dt){
+  if(mStick||tiltOn) return;           // mouse/tilt own the stick when active
+  const rollRate=1.6, pitchRate=1.4;   // per second toward full deflection
+  const rudRate=1.3;                   // rudder ramp
+  // ---- STICK: roll (arrows L/R) ----
+  let ax=0;
+  if(KEY['arrowleft'])  ax-=1;
+  if(KEY['arrowright']) ax+=1;
+  if(ax!==0) ctrl.da=Math.max(-1,Math.min(1, ctrl.da + ax*rollRate*dt));
+  else       ctrl.da += (0-ctrl.da)*Math.min(1,dt*4);   // release: roll re-centres
+  // ---- STICK: pitch (arrows U/D), relative to trim ----
+  let ay=0;
+  if(KEY['arrowup'])   ay-=1;          // push = nose down
+  if(KEY['arrowdown']) ay+=1;          // pull = nose up
+  if(ay!==0) ctrl.de=Math.max(-1,Math.min(1, ctrl.de + ay*pitchRate*dt));
+  else       ctrl.de += (pitchTrim-ctrl.de)*Math.min(1,dt*3); // release: ease back to trim
+  // ---- RUDDER: Z/X, linked & holds ----
+  let rx=0;
+  if(KEY['z']) rx-=1;
+  if(KEY['x']) rx+=1;
+  if(rx!==0){ ctrl.dr=Math.max(-1,Math.min(1, ctrl.dr + rx*rudRate*dt)); setPedalVisual(); }
+  // (no auto-centre: rudder stays where you leave it, like the pedals)
+  // ---- AIRBRAKE: [ close / ] open, progressive ----
+  if(KEY['[']){ S.brake=Math.max(0,(S.brake||0)-90*dt); document.getElementById('brake').value=S.brake; }
+  if(KEY[']']){ S.brake=Math.min(100,(S.brake||0)+90*dt); document.getElementById('brake').value=S.brake; }
+  // ---- TRIM: - nose down / = nose up ----
+  if(KEY['-']){ pitchTrim=Math.max(-0.6,pitchTrim-0.5*dt); document.getElementById('trim').value=Math.round(pitchTrim/0.6*100); }
+  if(KEY['=']){ pitchTrim=Math.min( 0.6,pitchTrim+0.5*dt); document.getElementById('trim').value=Math.round(pitchTrim/0.6*100); }
+  syncTiltDot();
+}
 document.getElementById('brake').addEventListener('input',e=>{S.brake=+e.target.value;});
 
 /* ---------------- loop ---------------- */
@@ -1094,6 +1244,7 @@ let tPrev=0,running=false;
 function frame(t){
   if(running){
     let dt=(t-tPrev)/1000; if(!dt||dt>0.05)dt=0.016; tPrev=t;
+    applyKeys(dt);
     // substep for stability
     const N=16,h=dt/N; for(let i=0;i<N;i++) physics(h);
     audioUpdate(dt); updateThree(); draw();
@@ -1104,6 +1255,17 @@ requestAnimationFrame(frame);
 
 /* ---------------- menu ---------------- */
 document.querySelectorAll('.scn button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.scn button').forEach(x=>x.style.opacity=0.5);b.style.opacity=1;setup(b.dataset.scn);});
+(function windUI(){
+  const wd=document.getElementById('wdir'),ws=document.getElementById('wspd'),wg=document.getElementById('wgust');
+  function upd(){
+    WIND.dirDeg=+wd.value; WIND.spd=(+ws.value)*KT; WIND.gust=(+wg.value)*KT;
+    ENV.windDir=WIND.dirDeg*Math.PI/180; ENV.windSpd=WIND.spd;
+    document.getElementById('wdV').textContent=wd.value;
+    document.getElementById('wsV').textContent=ws.value;
+    document.getElementById('wgV').textContent=wg.value;
+  }
+  wd.oninput=ws.oninput=wg.oninput=upd; upd();
+})();
 document.getElementById('startBtn').onclick=async()=>{
   initAudio();
   const btn=document.getElementById('startBtn');
