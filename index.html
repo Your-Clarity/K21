@@ -476,11 +476,40 @@ function physics(dt){
 
 /* ---------------- audio vario + warnings ---------------- */
 let actx, varioOsc=null, varioGain=null;
-function initAudio(){try{if(!actx){actx=new(window.AudioContext||window.webkitAudioContext)();}}catch(e){}}
+function initAudio(){try{if(!actx){actx=new(window.AudioContext||window.webkitAudioContext)();initWindNoise();}}catch(e){}}
 function beep(f,d,t,v){try{initAudio();const o=actx.createOscillator(),g=actx.createGain();o.type=t;o.frequency.value=f;g.gain.value=v;
   o.connect(g);g.connect(actx.destination);o.start();g.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+d);o.stop(actx.currentTime+d);}catch(e){}}
 let stallBeepOn=false, varioTimer=0;
+/* ---- WIND NOISE: filtered noise whose loudness & brightness track airspeed.
+   Real cue: the rush rises with speed and FALLS AWAY as you slow toward the stall,
+   and roughens in a slip/skid (crossed controls). ---- */
+let windNoise=null;
+function initWindNoise(){
+  try{ initAudio(); if(windNoise) return;
+    // pink-ish noise buffer
+    const len=actx.sampleRate*2, buf=actx.createBuffer(1,len,actx.sampleRate), d=buf.getChannelData(0);
+    let last=0; for(let i=0;i<len;i++){const w=Math.random()*2-1; last=(last+0.02*w)/1.02; d[i]=last*3.5;}
+    const src=actx.createBufferSource(); src.buffer=buf; src.loop=true;
+    const lp=actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=600;
+    const g=actx.createGain(); g.gain.value=0.0;
+    src.connect(lp); lp.connect(g); g.connect(actx.destination); src.start();
+    windNoise={g,lp};
+  }catch(e){}
+}
+function windNoiseUpdate(){
+  if(!windNoise){ if(actx) initWindNoise(); return; }
+  const kt=S.V/KT;
+  // loudness grows with speed; near-silent at/below stall so quietening warns you
+  const spd=Math.max(0,(kt-30)/70);            // 0 at 30kt -> ~1 at 100kt
+  let vol=0.02 + 0.16*spd*spd;
+  // slip/skid adds a rougher, louder rush (crossed controls audible)
+  const slip=Math.min(1,Math.abs(S.beta)*4);
+  vol*=(1+0.6*slip);
+  windNoise.g.gain.setTargetAtTime(vol, actx.currentTime, 0.08);
+  windNoise.lp.frequency.setTargetAtTime(400+900*spd+500*slip, actx.currentTime, 0.08);
+}
 function audioUpdate(dt){
+  windNoiseUpdate();
   // audio vario: rising beeps in lift, solid tone in sink
   varioTimer-=dt;
   if(S.vario>0.3){ const rate=clamp(0.5-S.vario*0.05,0.08,0.5); if(varioTimer<=0){beep(500+S.vario*120,0.09,'sine',0.12);varioTimer=rate;} }
