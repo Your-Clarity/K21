@@ -371,7 +371,7 @@ function physics(dt){
   const geFactor=(hb<1.0)?(0.5+0.5*hb):1.0;      // [E] induced drag x0.5 on the deck -> x1 at 1 span
   let CD=AC.CD0+brakeCD+hiSpeed + (CL*CL/(Math.PI*AC.AR*AC.e))*geFactor;
   // extended engine/pylon drag: big penalty while the engine is deployed (real Mi). Retracted = clean.
-  if(typeof ENG!=='undefined' && ENG.on) CD += 0.045; // [E] pylon + windmilling/turning prop
+  if(typeof ENG!=='undefined' && ENG.deployed) CD += 0.045; // [E] pylon + prop drag, only while deployed
   const CY=AC.CYb*beta;
 
   // --- asymmetric wing stall -> spin autorotation (emergent) ---
@@ -389,7 +389,7 @@ function physics(dt){
 
   // --- aero forces (body) ---
   const L=qbar*AC.S*CL, D=qbar*AC.S*CD, Yf=qbar*AC.S*CY;
-  const T=(typeof ENG!=='undefined'&&ENG.on)?engineThrust(V):0; // Mi self-launch thrust along body x
+  const T=(typeof ENG!=='undefined'&&ENG.on&&ENG.deployed)?engineThrust(V):0; // thrust only when deployed & running
   const Fx = L*Math.sin(alpha) - D*Math.cos(alpha) + T;
   const Fz = -L*Math.cos(alpha) - D*Math.sin(alpha);
   const Fy = Yf;
@@ -545,7 +545,7 @@ function initThree(){
 /* per-object OBJ parser: separates control surfaces so they can move.
    Model frame: nose -X (so trailing edges are +X), up +Y, span Z. */
 const ANIM={aileronG:null,aileronD:null,profondeur:null,direction:null,
-            spoilerG:null,spoilerD:null,helice:null,moteur:null};
+            spoilerG:null,spoilerD:null,helice:null,moteur:null,porteG:null,porteD:null};
 async function loadGliderModel(){
   let objs=null, vs=[];
   try{
@@ -598,6 +598,8 @@ async function loadGliderModel(){
     let hinge;
     if(key==='direction'){ hinge=[bb.mn[0], bb.c[1], bb.c[2]]; }         // rudder: vertical hinge at forward edge
     else if(key==='helice'){ hinge=bb.c; }                               // prop: spin about its centre
+    else if(key==='porteG'){ hinge=[bb.c[0], bb.c[1], bb.mx[2]]; }       // left bay door: hinge at outer (+Z) edge
+    else if(key==='porteD'){ hinge=[bb.c[0], bb.c[1], bb.mn[2]]; }       // right bay door: hinge at outer (-Z) edge
     else { hinge=[bb.mn[0], bb.c[1], bb.c[2]]; }                         // ailerons/elevator/spoilers: spanwise hinge at forward edge
     geo.translate(-hinge[0],-hinge[1],-hinge[2]);
     const pivot=new THREE.Group(); pivot.position.set(hinge[0],hinge[1],hinge[2]);
@@ -618,6 +620,7 @@ async function loadGliderModel(){
   // engine starts retracted (hidden) — this is the self-launching Mi
   if(ANIM.moteur)ANIM.moteur.visible=false;
   if(ANIM.helice)ANIM.helice.visible=false;
+  ENG.doorAngle=0; // doors start closed (flush)
 }
 /* terrain mesh from the (real or fallback) heightmap */
 /* ---- Esri World Imagery tiles draped on the terrain (attribution shown) ---- */
@@ -706,7 +709,36 @@ function buildTerrainMesh(){
     new THREE.MeshLambertMaterial({color:0xff7733,side:THREE.DoubleSide}));
   windSock.rotation.z=Math.PI/2; windSock.position.set(-18,5.5,-18); fieldGrp.add(windSock);
 }
-let AIM={N:150,E:0,hdg:0}, windSock=null;
+let AIM={N:150,E:0,hdg:0}, windSock=null, cloudGrp=null;
+/* cumulus clouds: one puffy cloud over each thermal at cloudbase — a marked cloud means lift below it */
+function buildClouds(){
+  if(cloudGrp){ scene.remove(cloudGrp); }
+  cloudGrp=new THREE.Group(); scene.add(cloudGrp);
+  const cloudMat=new THREE.MeshLambertMaterial({color:0xffffff});
+  const baseUp=760; // cloudbase (m) above valley floor
+  for(const t of ENV.thermals){
+    const c=new THREE.Group();
+    // clump of soft spheres = a fair-weather cumulus
+    const n=5+Math.floor(Math.random()*4);
+    for(let i=0;i<n;i++){
+      const r=90+Math.random()*70;
+      const s=new THREE.Mesh(new THREE.SphereGeometry(r,10,8),cloudMat);
+      s.position.set((Math.random()-0.5)*260,(Math.random()-0.3)*70,(Math.random()-0.5)*260);
+      s.scale.y=0.6; c.add(s);
+    }
+    // three x=E, y=Up, z=-N ; thermal is (t.x=N, t.y=E)
+    c.position.set(t.y, baseUp, -t.x);
+    cloudGrp.add(c);
+  }
+  // a few distant decorative clouds for depth
+  for(let i=0;i<8;i++){
+    const c=new THREE.Group();
+    for(let j=0;j<5;j++){const s=new THREE.Mesh(new THREE.SphereGeometry(120+Math.random()*90,8,6),cloudMat);
+      s.position.set((Math.random()-0.5)*400,(Math.random()-0.3)*90,(Math.random()-0.5)*400);s.scale.y=0.55;c.add(s);}
+    c.position.set((Math.random()-0.5)*16000, 820+Math.random()*300, (Math.random()-0.5)*16000);
+    cloudGrp.add(c);
+  }
+}
 /* per-frame: place glider + cameras from flight state */
 const _sm={x:0,y:0,z:0,init:false};
 function updateThree(){
@@ -723,8 +755,17 @@ function updateThree(){
   const brk=(S.brake||0)/100;
   if(ANIM.spoilerG){ ANIM.spoilerG.position.y = ANIM.spoilerG.userData.baseY + 0.22*brk; ANIM.spoilerG.rotation.z=0.25*brk; }
   if(ANIM.spoilerD){ ANIM.spoilerD.position.y = ANIM.spoilerD.userData.baseY + 0.22*brk; ANIM.spoilerD.rotation.z=0.25*brk; }
-  if(ANIM.moteur) ANIM.moteur.visible = ENG.on;
-  if(ANIM.helice){ ANIM.helice.visible = ENG.on; if(ENG.on) ANIM.helice.rotation.x += 0.9; }
+  // ---- engine bay doors: open when engine deployed, close flush when stowed ----
+  const doorTarget = ENG.on ? 1 : 0;
+  ENG.doorAngle = (ENG.doorAngle===undefined?0:ENG.doorAngle) + (doorTarget-(ENG.doorAngle||0))*Math.min(1,0.06);
+  const da=ENG.doorAngle*1.2; // radians open (~69°)
+  if(ANIM.porteG) ANIM.porteG.rotation.x =  da;  // left door swings out one way
+  if(ANIM.porteD) ANIM.porteD.rotation.x = -da;  // right door the other
+  // engine/prop only visible once the doors are mostly open (so it rises out of the bay)
+  const deployed = ENG.doorAngle>0.5;
+  ENG.deployed = deployed;
+  if(ANIM.moteur) ANIM.moteur.visible = deployed;
+  if(ANIM.helice){ ANIM.helice.visible = deployed; if(ENG.on) ANIM.helice.rotation.x += 0.9; }
 
   const p=ned2three([S.posN,S.posE,S.posD]);
   const fwd=ned2three(b2w(S.q,[1,0,0]));
@@ -763,7 +804,7 @@ document.getElementById('viewBtn').onclick=()=>{
 };
 
 /* ---- ASK 21 Mi self-launch engine: ~41 kW rotary on a pop-up pylon [M spec, E thrust model] ---- */
-const ENG={on:false, osc:null, gain:null};
+const ENG={on:false, osc:null, gain:null, doorAngle:0, deployed:false};
 function engineThrust(V){ // prop thrust ~ eta*P/V, capped at low speed; tuned for ~2.5-3 m/s climb
   return Math.min(1500, 0.65*41000/Math.max(V,8));
 }
@@ -1319,6 +1360,7 @@ document.getElementById('startBtn').onclick=async()=>{
   document.getElementById('engBtn').textContent='ENGINE OFF';
   document.getElementById('engBtn').classList.remove('on');
   setup(scenario);
+  buildClouds(); // cumulus over the thermals set by setup()
   document.getElementById('brake').value=0;
   document.getElementById('trim').value=0; pitchTrim=0;
   document.getElementById('menu').classList.add('hidden');
