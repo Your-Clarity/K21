@@ -120,6 +120,7 @@
     <button data-scn="stall">STALL DRILL</button>
     <button data-scn="spin">SPIN ENTRY</button>
     <button data-scn="approach">CIRCUIT &amp; LANDING</button>
+    <button data-scn="free">FREE LANDING</button>
   </div>
   <div class="tag" style="margin-top:6px">WIND</div>
   <div class="windrow">
@@ -322,11 +323,12 @@ function setup(s){
   if(s==='ridge'){ S.posE=-200; spawnThermals(2);}
   else if(s==='thermal'){ spawnThermals(7);}
   else if(s==='approach'){ spawnThermals(0); }
+  else if(s==='free'){ spawnThermals(3); }   // free landing: some lift, plenty of height, plan your own circuit
   else { spawnThermals(0); }
   const groundHere=terrainAlt(S.posN,S.posE);
-  const wantUp = {ridge:260, thermal:500, stall:900, spin:1100, approach:210}[s] || 500;
+  const wantUp = {ridge:260, thermal:500, stall:900, spin:1100, approach:210, free:600}[s] || 500;
   S.posD = -(groundHere + wantUp);
-  document.getElementById('lab').textContent={ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY',approach:'CIRCUIT & LANDING'}[s];
+  document.getElementById('lab').textContent={ridge:'RIDGE SOAR',thermal:'THERMAL',stall:'STALL DRILL',spin:'SPIN ENTRY',approach:'CIRCUIT & LANDING',free:'FREE LANDING'}[s];
 }
 
 /* ---------------- controls ---------------- */
@@ -368,6 +370,8 @@ function physics(dt){
   const hb=Math.max(0,agl)/AC.b;                 // height in spans
   const geFactor=(hb<1.0)?(0.5+0.5*hb):1.0;      // [E] induced drag x0.5 on the deck -> x1 at 1 span
   let CD=AC.CD0+brakeCD+hiSpeed + (CL*CL/(Math.PI*AC.AR*AC.e))*geFactor;
+  // extended engine/pylon drag: big penalty while the engine is deployed (real Mi). Retracted = clean.
+  if(typeof ENG!=='undefined' && ENG.on) CD += 0.045; // [E] pylon + windmilling/turning prop
   const CY=AC.CYb*beta;
 
   // --- asymmetric wing stall -> spin autorotation (emergent) ---
@@ -791,7 +795,7 @@ function draw(){
   ctx.fillStyle='#9fb6da';ctx.font='11px Share Tech Mono';
   ctx.fillText('WIND '+String(Math.round(WIND.dirDeg)).padStart(3,'0')+'° / '+Math.round(WIND.spd/KT)+'kt',14,54);
   ctx.fillText('AGL '+Math.round(aglFt)+' ft',14,70);
-  if(scenario==='approach'){
+  if(scenario==='approach'||scenario==='free'){
     const dMiss=Math.hypot(S.posN-AIM.N,S.posE-AIM.E);
     ctx.fillText('AIM '+Math.round(dMiss)+' m',14,86);
   }
@@ -1136,33 +1140,39 @@ document.getElementById('trim').addEventListener('input',e=>{ pitchTrim=(+e.targ
 // rudder stays on the touch pad (the 'feet')
 /* ---- rudder pedals: linked, and they HOLD where you push (like real pedals) ---- */
 // ctrl.dr in [-1,1]: -1 = full left, +1 = full right. Persists until you push the other side or centre.
+// TRUE LINKED PEDALS: one shaft. Pushing either pedal drives the shared rudder toward that
+// side, and the OTHER pedal is mechanically driven the exact opposite amount.
 function setPedalVisual(){
-  const v=ctrl.dr; // + = right
+  const v=Math.max(-1,Math.min(1,ctrl.dr)); // + = right pedal forward, left pedal back
   const L=document.getElementById('pedalL').querySelector('.ptop');
   const R=document.getElementById('pedalR').querySelector('.ptop');
-  // pushing right pedal: right depresses (taller fill), left rises (shorter)
-  const rightPush=Math.max(0,v), leftPush=Math.max(0,-v);
-  R.style.height=(40+rightPush*55)+'%';
-  L.style.height=(40+leftPush*55)+'%';
+  // linked: right forward (v>0) => right pedal DOWN (full) while left comes UP (recedes), and vice-versa.
+  // map v in [-1,1] to each pedal's travel [15%..95%], perfectly mirrored.
+  const rightTravel = 55 + v*40;   // v=+1 -> 95, v=0 -> 55, v=-1 -> 15
+  const leftTravel  = 55 - v*40;   // exact opposite
+  R.style.height=rightTravel+'%';
+  L.style.height=leftTravel+'%';
 }
 function bindPedal(id,sign){
   const pedal=document.getElementById(id); let active=null;
   function press(cy){
     const r=pedal.getBoundingClientRect();
-    // how far down the pedal you press = how much rudder (top=0, bottom=full)
+    // press depth on THIS pedal (0 at top .. 1 fully pressed at bottom)
     const f=Math.max(0,Math.min(1,(cy-r.top)/r.height));
-    ctrl.dr = sign*f;       // sets and HOLDS; opposite side reacts via setPedalVisual
+    // pressing a pedal drives the whole linked shaft toward that side by the press depth.
+    // the opposite pedal is driven back automatically by setPedalVisual (one shared value).
+    ctrl.dr = sign*f;
     setPedalVisual();
   }
   pedal.addEventListener('touchstart',e=>{active=e.changedTouches[0].identifier;press(e.changedTouches[0].clientY);e.preventDefault();},{passive:false});
   pedal.addEventListener('touchmove',e=>{for(const t of e.changedTouches)if(t.identifier===active)press(t.clientY);e.preventDefault();},{passive:false});
-  pedal.addEventListener('touchend',e=>{for(const t of e.changedTouches)if(t.identifier===active)active=null;e.preventDefault();},{passive:false}); // note: does NOT recentre
+  pedal.addEventListener('touchend',e=>{for(const t of e.changedTouches)if(t.identifier===active)active=null;e.preventDefault();},{passive:false}); // HOLDS (real pedals stay put)
   let md=false;pedal.addEventListener('mousedown',e=>{md=true;press(e.clientY);});
   window.addEventListener('mousemove',e=>{if(md&&pedal.matches(':hover'))press(e.clientY);});
   window.addEventListener('mouseup',()=>{md=false;});
 }
-bindPedal('pedalL',-1); // left pedal -> left rudder
-bindPedal('pedalR', 1); // right pedal -> right rudder
+bindPedal('pedalL',-1); // left pedal -> left rudder (drives right pedal back)
+bindPedal('pedalR', 1); // right pedal -> right rudder (drives left pedal back)
 document.getElementById('rudCenter').onclick=()=>{ ctrl.dr=0; setPedalVisual(); };
 setPedalVisual();
 
